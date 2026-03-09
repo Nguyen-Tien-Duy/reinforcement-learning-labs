@@ -1,0 +1,39 @@
+================ BẮT ĐẦU CHẠY THUẬT TOÁN ================
+Đang thu thập tập mẫu (15000 episodes)...
+-> Thời gian lấy mẫu, ước lượng Model P và R: 9.51s
+
+Bắt đầu chạy Value Iteration...
+[VI] Vòng lặp:  100 | Độ lệch Max Delta: 0.369730
+[VI] Vòng lặp:  200 | Độ lệch Max Delta: 0.135333
+[VI] Vòng lặp:  300 | Độ lệch Max Delta: 0.049536
+[VI] Vòng lặp:  400 | Độ lệch Max Delta: 0.018132
+[VI] Vòng lặp:  500 | Độ lệch Max Delta: 0.006637
+[VI] Vòng lặp:  600 | Độ lệch Max Delta: 0.002429
+[VI] Vòng lặp:  700 | Độ lệch Max Delta: 0.000889
+[VI] Vòng lặp:  800 | Độ lệch Max Delta: 0.000325
+[VI] Vòng lặp:  900 | Độ lệch Max Delta: 0.000119
+[VI] Vòng lặp: 1000 | Độ lệch Max Delta: 0.000044
+[VI] Vòng lặp: 1100 | Độ lệch Max Delta: 0.000016
+[VI] Vòng lặp: 1200 | Độ lệch Max Delta: 0.000006
+[VI] Vòng lặp: 1300 | Độ lệch Max Delta: 0.000002
+Value Iteration hội tụ sau 1376 vòng lặp.
+
+Bắt đầu chạy Policy Iteration...
+[PI] Vòng lớn:  1 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 5040
+[PI] Vòng lớn:  2 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 49
+[PI] Vòng lớn:  3 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 43
+[PI] Vòng lớn:  4 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 44
+[PI] Vòng lớn:  5 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 31
+[PI] Vòng lớn:  6 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 18
+Policy Iteration dừng sớm với 18 changes còn lại.
+Policy Iteration hội tụ sau 6 vòng lặp.
+
+=== TỔNG KẾT & SO SÁNH ===
+ Tốc độ hội tụ thuật toán:
+  - Value Iteration : 338.2121 giây
+  - Policy Iteration: 1093.9278 giây
+
+ Reward trung bình (trên 100 episodes):
+  - Random Agent    : 22.27
+  - Value Iteration : 75.17
+  - Policy Iteration: 38.11

@@ -1,0 +1,138 @@
+================ BẮT ĐẦU CHẠY THUẬT TOÁN ================
+Đang thu thập tập mẫu (15000 episodes)...
+-> Thời gian lấy mẫu, ước lượng Model P và R: 7.16s
+
+Bắt đầu chạy Value Iteration...
+[VI] Vòng lặp:  100 | Độ lệch Max Delta: 0.369730
+[VI] Vòng lặp:  200 | Độ lệch Max Delta: 0.135333
+[VI] Vòng lặp:  300 | Độ lệch Max Delta: 0.049536
+[VI] Vòng lặp:  400 | Độ lệch Max Delta: 0.018132
+[VI] Vòng lặp:  500 | Độ lệch Max Delta: 0.006637
+[VI] Vòng lặp:  600 | Độ lệch Max Delta: 0.002429
+[VI] Vòng lặp:  700 | Độ lệch Max Delta: 0.000889
+[VI] Vòng lặp:  800 | Độ lệch Max Delta: 0.000325
+[VI] Vòng lặp:  900 | Độ lệch Max Delta: 0.000119
+[VI] Vòng lặp: 1000 | Độ lệch Max Delta: 0.000044
+[VI] Vòng lặp: 1100 | Độ lệch Max Delta: 0.000016
+[VI] Vòng lặp: 1200 | Độ lệch Max Delta: 0.000006
+[VI] Vòng lặp: 1300 | Độ lệch Max Delta: 0.000002
+Value Iteration hội tụ sau 1376 vòng lặp.
+
+Bắt đầu chạy Policy Iteration...
+[PI] Vòng lớn:  1 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 5015
+[PI] Vòng lớn:  2 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 49
+[PI] Vòng lớn:  3 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 42
+[PI] Vòng lớn:  4 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 30
+[PI] Vòng lớn:  5 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 34
+[PI] Vòng lớn:  6 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 39
+[PI] Vòng lớn:  7 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 25
+[PI] Vòng lớn:  8 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 23
+[PI] Vòng lớn:  9 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 35
+[PI] Vòng lớn: 10 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 32
+[PI] Vòng lớn: 11 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 36
+[PI] Vòng lớn: 12 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 27
+[PI] Vòng lớn: 13 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 34
+[PI] Vòng lớn: 14 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 23
+[PI] Vòng lớn: 15 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 31
+[PI] Vòng lớn: 16 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 43
+[PI] Vòng lớn: 17 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 27
+[PI] Vòng lớn: 18 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 32
+[PI] Vòng lớn: 19 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 23
+[PI] Vòng lớn: 20 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 36
+[PI] Vòng lớn: 21 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 30
+[PI] Vòng lớn: 22 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 33
+[PI] Vòng lớn: 23 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 30
+[PI] Vòng lớn: 24 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 31
+[PI] Vòng lớn: 25 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 22
+[PI] Vòng lớn: 26 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 22
+[PI] Vòng lớn: 27 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 24
+[PI] Vòng lớn: 28 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 20
+[PI] Vòng lớn: 29 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 22
+[PI] Vòng lớn: 30 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 23
+[PI] Vòng lớn: 31 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 33
+[PI] Vòng lớn: 32 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 33
+[PI] Vòng lớn: 33 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 41
+[PI] Vòng lớn: 34 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 27
+[PI] Vòng lớn: 35 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 31
+[PI] Vòng lớn: 36 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 30
+[PI] Vòng lớn: 37 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 28
+[PI] Vòng lớn: 38 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 32
+[PI] Vòng lớn: 39 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 24
+[PI] Vòng lớn: 40 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 17
+[PI] Vòng lớn: 41 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 20
+[PI] Vòng lớn: 42 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 31
+[PI] Vòng lớn: 43 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 31
+[PI] Vòng lớn: 44 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 26
+[PI] Vòng lớn: 45 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 24
+[PI] Vòng lớn: 46 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 23
+[PI] Vòng lớn: 47 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 18
+[PI] Vòng lớn: 48 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 22
+[PI] Vòng lớn: 49 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 30
+[PI] Vòng lớn: 50 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 29
+[PI] Vòng lớn: 51 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 28
+[PI] Vòng lớn: 52 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 29
+[PI] Vòng lớn: 53 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 31
+[PI] Vòng lớn: 54 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 26
+[PI] Vòng lớn: 55 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 33
+[PI] Vòng lớn: 56 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 30
+[PI] Vòng lớn: 57 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 28
+[PI] Vòng lớn: 58 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 27
+[PI] Vòng lớn: 59 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 26
+[PI] Vòng lớn: 60 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 23
+[PI] Vòng lớn: 61 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 19
+[PI] Vòng lớn: 62 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 23
+[PI] Vòng lớn: 63 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 29
+[PI] Vòng lớn: 64 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 27
+[PI] Vòng lớn: 65 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 16
+[PI] Vòng lớn: 66 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 18
+[PI] Vòng lớn: 67 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 23
+[PI] Vòng lớn: 68 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 25
+[PI] Vòng lớn: 69 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 28
+[PI] Vòng lớn: 70 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 25
+[PI] Vòng lớn: 71 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 32
+[PI] Vòng lớn: 72 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 27
+[PI] Vòng lớn: 73 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 27
+[PI] Vòng lớn: 74 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 32
+[PI] Vòng lớn: 75 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 26
+[PI] Vòng lớn: 76 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 28
+[PI] Vòng lớn: 77 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 27
+[PI] Vòng lớn: 78 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 21
+[PI] Vòng lớn: 79 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 26
+[PI] Vòng lớn: 80 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 23
+[PI] Vòng lớn: 81 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 24
+[PI] Vòng lớn: 82 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 27
+[PI] Vòng lớn: 83 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 33
+[PI] Vòng lớn: 84 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 26
+[PI] Vòng lớn: 85 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 24
+[PI] Vòng lớn: 86 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 27
+[PI] Vòng lớn: 87 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 35
+[PI] Vòng lớn: 88 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 35
+[PI] Vòng lớn: 89 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 33
+[PI] Vòng lớn: 90 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 29
+[PI] Vòng lớn: 91 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 27
+[PI] Vòng lớn: 92 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 34
+[PI] Vòng lớn: 93 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 40
+[PI] Vòng lớn: 94 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 24
+[PI] Vòng lớn: 95 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 20
+[PI] Vòng lớn: 96 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 37
+[PI] Vòng lớn: 97 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 38
+[PI] Vòng lớn: 98 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 29
+[PI] Vòng lớn: 99 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 29
+[PI] Vòng lớn: 100 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 33
+[PI] Vòng lớn: 101 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 21
+[PI] Vòng lớn: 102 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 37
+[PI] Vòng lớn: 103 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 27
+[PI] Vòng lớn: 104 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 24
+[PI] Vòng lớn: 105 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 21
+[PI] Vòng lớn: 106 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 28
+[PI] Vòng lớn: 107 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 24
+[PI] Vòng lớn: 108 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 28
+[PI] Vòng lớn: 109 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 40
+[PI] Vòng lớn: 110 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 24
+[PI] Vòng lớn: 111 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 41
+[PI] Vòng lớn: 112 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 34
+[PI] Vòng lớn: 113 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 27
+[PI] Vòng lớn: 114 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 29
+[PI] Vòng lớn: 115 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 22
+[PI] Vòng lớn: 116 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 17
+[PI] Vòng lớn: 117 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 20
