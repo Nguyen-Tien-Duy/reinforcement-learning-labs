@@ -64,6 +64,12 @@ def build_reward_episode_frame(
     next_state = df.groupby("episode_id", dropna=False)["state"].shift(-1)
     next_state = next_state.where(next_state.notna(), df["state"])
 
+    executed_volume_proxy = np.where(
+        df["action"].astype(np.int8).to_numpy() == 1,
+        df["queue_size"].to_numpy(dtype=np.float32),
+        0.0,
+    )
+
     transitions = pd.DataFrame(
         {
             "state": df["state"],
@@ -74,6 +80,10 @@ def build_reward_episode_frame(
             "episode_id": df["episode_id"].astype(np.int64),
             "timestamp": df["timestamp"],
             "step_index": df["step_index"].astype(np.int64),
+            "gas_t": pd.to_numeric(df["gas_t"], errors="coerce").fillna(0.0).astype(np.float32),
+            "queue_size": pd.to_numeric(df["queue_size"], errors="coerce").fillna(0.0).astype(np.float32),
+            "time_to_deadline": pd.to_numeric(df["time_to_deadline"], errors="coerce").fillna(0.0).astype(np.float32),
+            "executed_volume_proxy": pd.Series(executed_volume_proxy, dtype=np.float32),
             "truncated": truncated.astype(np.int8),
             "info_json": pd.Series([None] * len(df), dtype="object"),
             "behavior_log_prob": pd.Series([None] * len(df), dtype="object"),

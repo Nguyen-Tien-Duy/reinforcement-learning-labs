@@ -1,0 +1,51 @@
+{
+  "generated_at": "2026-04-11T19:16:15",
+  "rows_total": 5224088,
+  "rows_eval": 1044818,
+  "eval_ratio": 0.2,
+  "available_policies": [
+    "logged_policy",
+    "execute_now",
+    "rl_policy"
+  ],
+  "metrics": {
+    "logged_policy": {
+      "coverage": 1.0,
+      "expected_return_matched": 1833588.6375732424,
+      "action_rate": 0.5155271061562875,
+      "deadline_miss_rate": 0.0,
+      "total_cost_per_episode": null,
+      "execute_count_per_episode_proxy": 3664.1632653061224,
+      "adjusted_return": 1833588.6375732424,
+      "reward_variance_episode": 1.774052796864764e+21,
+      "cvar_episode_alpha_0.1": -3619106653.4666667
+    },
+    "execute_now": {
+      "coverage": 0.5155271061562875,
+      "expected_return_matched": 3556725.971223396,
+      "action_rate": 1.0,
+      "deadline_miss_rate": 0.0,
+      "total_cost_per_episode": null,
+      "execute_count_per_episode_proxy": 7107.60544217687,
+      "adjusted_return": 1833588.6473357084,
+      "reward_variance_episode": 1.7740527969995768e+21,
+      "cvar_episode_alpha_0.1": -3619106586.8
+    },
+    "rl_policy": {
+      "coverage": 0.6476888797857617,
+      "expected_return_matched": 2835742.496019754,
+      "action_rate": 0.33808854747908246,
+      "deadline_miss_rate": 0.006802721088435374,
+      "total_cost_per_episode": null,
+      "execute_count_per_episode_proxy": 2403.0,
+      "adjusted_return": 1836678.8806079144,
+      "reward_variance_episode": 1.237254432930189e+21,
+      "cvar_episode_alpha_0.1": -1460545024.1333334
+    }
+  },
+  "skipped_estimators": {
+    "WIS": "Skipped: behavior policy probabilities/log-propensity are unavailable.",
+    "DR": "Skipped: fitted Q and behavior propensity models are not available in current pipeline.",
+    "FQE": "Skipped: dedicated FQE training/evaluation pipeline is not implemented yet."
+  }
+}
