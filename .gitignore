@@ -1,0 +1,32 @@
+# Ignore any directory named data/Data at any level
+**/data/
+**/Data/
+**/venv/
+**/env/
+**/wheelhouse/
+
+# Ignore common LaTeX generated files
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.glg
+*.glo
+*.gls
+*.idx
+*.ilg
+*.ind
+*.ist
+*.lof
+*.log
+*.lot
+*.nav
+*.out
+*.run.xml
+*.snm
+*.synctex.gz
+*.toc
+*.vrb
+*.xdv
