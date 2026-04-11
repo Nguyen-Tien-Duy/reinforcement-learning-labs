@@ -4,6 +4,10 @@
 **/venv/
 **/env/
 **/wheelhouse/
+**/__pycache__/
+**/d3rlpy_logs/
+**/output/
+
 
 # Ignore common LaTeX generated files
 *.aux

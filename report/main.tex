@@ -1,0 +1,72 @@
+% !TeX program = xelatex
+\documentclass[12pt,a4paper]{report}
+\usepackage{hcmut}
+\usepackage[backend=biber, style=ieee]{biblatex}
+
+\usepackage{listings}
+\usepackage{xcolor}
+
+% Define Python style for listings
+\lstdefinestyle{PythonStyle}{
+    language=Python,
+    basicstyle=\ttfamily\footnotesize,
+    keywordstyle=\color{blue}\bfseries,
+    stringstyle=\color{red},
+    commentstyle=\color{green!50!black},
+    numberstyle=\tiny\color{gray},
+    numbers=left,
+    stepnumber=1,
+    showstringspaces=false,
+    tabsize=4,
+    breaklines=true,
+    frame=lines,
+    backgroundcolor=\color{gray!5},
+    morekeywords={as, assert, non, with, yield},
+    extendedchars=true,
+    literate={á}{{\'a}}1 {à}{{\`a}}1 {ả}{{\h{a}}}1 {ã}{{\~a}}1 {ạ}{{\d{a}}}1
+             {Á}{{\'A}}1 {À}{{\`A}}1 {Ả}{{\h{A}}}1 {Ã}{{\~A}}1 {Ạ}{{\d{A}}}1
+             {ă}{{\u{a}}}1 {ắ}{{\'a}}1 {ằ}{{\`a}}1 {ẳ}{{\h{a}}}1 {ẵ}{{\~a}}1 {ặ}{{\d{a}}}1
+             {Ă}{{\u{A}}}1 {Ắ}{{\'A}}1 {Ằ}{{\`A}}1 {Ẳ}{{\h{A}}}1 {Ẵ}{{\~A}}1 {Ặ}{{\d{A}}}1
+             {â}{{\^a}}1 {ấ}{{\'a}}1 {ầ}{{\`a}}1 {ẩ}{{\h{a}}}1 {ẫ}{{\~a}}1 {ậ}{{\d{a}}}1
+             {Â}{{\^A}}1 {Ấ}{{\'A}}1 {Ầ}{{\`A}}1 {Ẩ}{{\h{A}}}1 {Ẫ}{{\~A}}1 {Ậ}{{\d{A}}}1
+             {đ}{{\d{d}}}1 {Đ}{{\d{D}}}1
+             {é}{{\'e}}1 {è}{{\`e}}1 {ẻ}{{\h{e}}}1 {ẽ}{{\~e}}1 {ẹ}{{\d{e}}}1
+             {É}{{\'E}}1 {È}{{\`E}}1 {Ẻ}{{\h{E}}}1 {Ẽ}{{\~E}}1 {Ẹ}{{\d{E}}}1
+             {ê}{{\^e}}1 {ế}{{\'e}}1 {ề}{{\`e}}1 {ể}{{\h{e}}}1 {ễ}{{\~e}}1 {ệ}{{\d{e}}}1
+             {Ê}{{\^E}}1 {Ế}{{\'E}}1 {Ề}{{\`E}}1 {Ể}{{\h{E}}}1 {Ễ}{{\~E}}1 {Ệ}{{\d{E}}}1
+             {í}{{\'i}}1 {ì}{{\`i}}1 {ỉ}{{\h{i}}}1 {ĩ}{{\~i}}1 {ị}{{\d{i}}}1
+             {Í}{{\'I}}1 {Ì}{{\`I}}1 {Ỉ}{{\h{I}}}1 {Ĩ}{{\~I}}1 {Ị}{{\d{I}}}1
+             {ó}{{\'o}}1 {ò}{{\`o}}1 {ỏ}{{\h{o}}}1 {õ}{{\~o}}1 {ọ}{{\d{o}}}1
+             {Ó}{{\'O}}1 {Ò}{{\`O}}1 {Ỏ}{{\h{O}}}1 {Õ}{{\~O}}1 {Ọ}{{\d{O}}}1
+             {ô}{{\^o}}1 {ố}{{\'o}}1 {ồ}{{\`o}}1 {ổ}{{\h{o}}}1 {ỗ}{{\~o}}1 {ộ}{{\d{o}}}1
+             {Ô}{{\^O}}1 {Ố}{{\'O}}1 {Ồ}{{\`O}}1 {Ổ}{{\h{O}}}1 {Ỗ}{{\~O}}1 {Ộ}{{\d{O}}}1
+             {ơ}{{\h{o}}}1 {ớ}{{\'o}}1 {ờ}{{\`o}}1 {ở}{{\h{o}}}1 {ỡ}{{\~o}}1 {ợ}{{\d{o}}}1
+             {Ơ}{{\h{O}}}1 {Ớ}{{\'O}}1 {Ờ}{{\`O}}1 {Ở}{{\h{O}}}1 {Ỡ}{{\~O}}1 {Ợ}{{\d{O}}}1
+             {ú}{{\'u}}1 {ù}{{\`u}}1 {ủ}{{\h{u}}}1 {ũ}{{\~u}}1 {ụ}{{\d{u}}}1
+             {Ú}{{\'U}}1 {Ù}{{\`U}}1 {Ủ}{{\h{U}}}1 {Ũ}{{\~U}}1 {Ụ}{{\d{U}}}1
+             {ư}{{\h{u}}}1 {ứ}{{\'u}}1 {ừ}{{\`u}}1 {ử}{{\h{u}}}1 {ữ}{{\~u}}1 {ự}{{\d{u}}}1
+             {Ư}{{\h{U}}}1 {Ứ}{{\'U}}1 {Ừ}{{\`U}}1 {Ử}{{\h{U}}}1 {Ữ}{{\~U}}1 {Ự}{{\d{U}}}1
+             {ý}{{\'y}}1 {ỳ}{{\`y}}1 {ỷ}{{\h{y}}}1 {ỹ}{{\~y}}1 {ỵ}{{\d{y}}}1
+             {Ý}{{\'Y}}1 {Ỳ}{{\`Y}}1 {Ỷ}{{\h{Y}}}1 {Ỹ}{{\~Y}}1 {Ỵ}{{\d{Y}}}1
+}
+
+\addbibresource{references.bib}
+
+\begin{document}
+
+\include{Sections/1-Title}
+% Đặt lại kiểu đánh số trang là số Ả Rập
+\pagenumbering{arabic} 
+% Đặt lại bộ đếm trang về 1
+\setcounter{page}{1} 
+
+% Bắt đầu nội dung chính của báo cáo
+
+\include{Sections/1-Introduction}
+\include{Sections/2-Labs}
+\include{Sections/3-Project}
+\include{Sections/5-Conclusion}
+
+\nocite{*}
+\printbibliography[title={Tài liệu tham khảo}]
+\end{document}

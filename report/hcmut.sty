@@ -1,0 +1,132 @@
+\usepackage{a4wide,amssymb,epsfig,latexsym,multicol,array,hhline,fancyhdr}
+\usepackage{fancybox} % For enhanced borders (doublebox, shadowbox, ovalbox)
+\usepackage{ifxetex,ifluatex}
+\ifnum 0\ifxetex 1\fi\ifluatex 1\fi=0 % if NOT xetex or luatex (using pdflatex)
+  \usepackage[utf8]{inputenc}
+  \usepackage[T5]{fontenc}
+  \usepackage{mathptmx} % Times New Roman clone for pdflatex
+\else % if xetex or luatex
+  \usepackage{fontspec}
+  \IfFontExistsTF{Times New Roman}{
+    \setmainfont{Times New Roman}
+  }{
+  \IfFontExistsTF{Liberation Serif}{
+    \setmainfont{Liberation Serif}
+  }{
+  \IfFontExistsTF{Noto Serif}{
+    \setmainfont{Noto Serif}
+  }{
+  \setmainfont{TeX Gyre Termes}
+  }}}
+\fi
+\usepackage{amsmath}
+\usepackage{float}
+\usepackage{lastpage}
+\usepackage[lined,boxed,commentsnumbered]{algorithm2e}
+\usepackage{enumerate}
+\usepackage{color}
+\usepackage{graphicx}							% Standard graphics package
+\usepackage{array}
+\usepackage{tabularx, caption}
+\usepackage{tabularx}
+\usepackage{multirow}
+\usepackage{multicol}
+\usepackage{rotating}
+\usepackage{graphics}
+\usepackage{geometry}
+\usepackage{setspace}
+\usepackage{epsfig}
+\usepackage{tikz}
+\usetikzlibrary{arrows,backgrounds,calc}
+\usepackage{hyperref}
+\usepackage{subcaption}
+\geometry{
+    a4paper,
+    left=20mm,
+    right=20mm,
+    top=20mm,
+    bottom=20mm,
+    headheight=20pt,
+    footskip=25pt
+}
+\singlespacing
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{6pt}
+
+\hypersetup{urlcolor=blue,linkcolor=black,citecolor=black,colorlinks=true} 
+%\usepackage{pstcol} 								% PSTricks with the standard color package
+
+\newtheorem{theorem}{{\bf Theorem}}
+\newtheorem{property}{{\bf Property}}
+\newtheorem{proposition}{{\bf Proposition}}
+\newtheorem{corollary}[proposition]{{\bf Corollary}}
+\newtheorem{lemma}[proposition]{{\bf Lemma}}
+
+\AtBeginDocument{%
+  \@ifundefined{refname}{%
+    \@ifundefined{bibname}{}{%
+      \renewcommand*\bibname{Nguồn tham khảo}%
+    }%
+  }{%
+    \renewcommand*\refname{Nguồn tham khảo}%
+  }%
+  \renewcommand*\contentsname{Mục lục}%
+  \renewcommand*\figurename{Hình}%
+  \renewcommand*\tablename{Bảng}%
+}
+%\usepackage{fancyhdr}
+\setlength{\headheight}{20pt}
+\pagestyle{fancy}
+\fancyhead{} % clear all header fields
+\fancyhead[L]{\scriptsize \leftmark}
+\fancyhead[R]{\scriptsize \rightmark}
+\fancyfoot{} % clear all footer fields
+\fancyfoot[L]{\scriptsize \textit{Báo cáo kết thúc môn}}
+\fancyfoot[R]{\scriptsize Trang {\thepage}/\pageref{LastPage}}
+\renewcommand{\headrulewidth}{0.3pt}
+\renewcommand{\footrulewidth}{0.3pt}
+
+
+%%%
+\setcounter{secnumdepth}{4}
+\setcounter{tocdepth}{3}
+\makeatletter
+\newcounter {subsubsubsection}[subsubsection]
+\renewcommand\thesubsubsubsection{\thesubsubsection .\@alph\c@subsubsubsection}
+\newcommand\subsubsubsection{\@startsection{subsubsubsection}{4}{\z@}%
+                                     {-3.25ex\@plus -1ex \@minus -.2ex}%
+                                     {1.5ex \@plus .2ex}%
+                                     {\normalfont\normalsize\bfseries}}
+\newcommand*\l@subsubsubsection{\@dottedtocline{3}{10.0em}{4.1em}}
+\newcommand*{\subsubsubsectionmark}[1]{}
+\makeatother
+% The package belong to this particular document.
+\usepackage{xcolor}
+\usepackage{listings}
+\definecolor{mGreen}{rgb}{0,0.7,0}
+\definecolor{mGray}{rgb}{0.5,0.5,0.5}
+\definecolor{mPurple}{rgb}{0.5,0,0.35} % Adjusted to a purple shade
+\definecolor{backgroundColour}{rgb}{0.97,0.97,0.97} % Adjusted to a lighter shade
+
+\lstdefinestyle{CStyle}{
+    backgroundcolor=\color{backgroundColour} ,   
+    commentstyle=\color{mGreen},
+    keywordstyle=\color{red},
+    numberstyle=\tiny\color{mGray},
+    stringstyle=\color{mPurple},
+    basicstyle=\footnotesize,
+    breakatwhitespace=false,         
+    breaklines=true,                 
+    captionpos=b,                    
+    keepspaces=true,                 
+    numbers=left,                    
+    numbersep=5pt,                  
+    showspaces=false,                
+    showstringspaces=false,
+    showtabs=false,                  
+    tabsize=2,
+    language=C
+}
+
+
+\endinput
