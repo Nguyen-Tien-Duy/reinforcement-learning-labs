@@ -64,9 +64,18 @@ def build_reward_episode_frame(
     next_state = df.groupby("episode_id", dropna=False)["state"].shift(-1)
     next_state = next_state.where(next_state.notna(), df["state"])
 
+    # Fix: use pre-execution queue_size (shift back 1 step within episode)
+    # because queue_size at the moment of action=1 is always 0
+    # (the derive_queue function resets the counter upon execution).
+    # Shifting by 1 captures the queue BEFORE the execute decision.
+    pre_execute_queue = (
+        df.groupby("episode_id", dropna=False)["queue_size"]
+        .shift(1)
+        .fillna(1.0)  # First step has no prior history, default to 1
+    )
     executed_volume_proxy = np.where(
-        df["action"].astype(np.int8).to_numpy() == 1,
-        df["queue_size"].to_numpy(dtype=np.float32),
+        execute_flag == 1,
+        pre_execute_queue.to_numpy(dtype=np.float32),
         0.0,
     )
 

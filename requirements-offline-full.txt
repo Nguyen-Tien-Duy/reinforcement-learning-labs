@@ -13,6 +13,7 @@ matplotlib>=3.8
 scikit-learn>=1.4
 tqdm>=4.66
 h5py>=3.10
+collection
 
 # Environments
 gymnasium[classic-control]>=0.29
