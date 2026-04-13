@@ -68,20 +68,21 @@ def train():
     target_net.eval() # Mạng target chỉ dùng để tính toán, không training trực tiếp
 
     optimizer = optim.AdamW(q_net.parameters(), lr=1e-4)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=2000) # T_max 
-    memory = ReplayBuffer(10000)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=20000) # T_max 
+    memory = ReplayBuffer(100000)
 
     # Define Hyperparameters
     gamma = 0.99
     epsilon = 1.0
     epsilon_decay = 0.995
     min_epsilon = 0.02
-    batch_size = 64
-    episodes = 1000
+    batch_size = 256
+    episodes = 10000
 
     total_reward = []
     losses = []
-    best_reward = 0 # Biến theo dõi kỷ lục
+    recent_rewards = deque(maxlen=50) # Lưu lịch sử 20 ván gần nhất
+    best_avg_reward = 0 # Theo dõi phong độ trung bình cao nhất
     best_model_path = os.path.join(log_dir, 'best_model.pth')
 
     for e in range(episodes):
@@ -143,14 +144,19 @@ def train():
 
         epsilon = max(min_epsilon, epsilon * epsilon_decay)
         total_reward.append(episodes_reward)
+        recent_rewards.append(episodes_reward)
 
-        # Lưu lại Best Policy
-        if episodes_reward >= best_reward and episodes_reward > 50:
-            best_reward = episodes_reward
+        # Tính điểm trung bình của 10 ván gần nhất
+        avg_reward = np.mean(recent_rewards)
+        
+        # Chiến thuật Checkpointing Xịn: Lưu lại Base trên phong độ trung bình
+        if avg_reward > best_avg_reward and avg_reward >= 500:
+            logging.warning(f"New best model found at episode {e} with average reward {avg_reward:.1f}")
+            best_avg_reward = avg_reward
             torch.save(q_net.state_dict(), best_model_path)
 
         if e % 50 == 0:
-            logging.info(f"Episode {e}, Reward: {episodes_reward}, Epsilon: {epsilon:.2f}, LR: {optimizer.param_groups[0]['lr']}")
+            logging.info(f"Episode {e}, Reward: {episodes_reward}, Avg50: {avg_reward:.1f}, Epsilon: {epsilon:.2f}, LR: {optimizer.param_groups[0]['lr']}")
 
         scheduler.step() # Giảm dần Learning Rate theo hình cosin
 

@@ -8,6 +8,8 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from d3rlpy.algos import IQLConfig
+from d3rlpy.models.encoders import VectorEncoderFactory
 
 from utils.load_data import (
     TransitionBuildConfig,
@@ -18,6 +20,8 @@ from utils.load_data import (
     load_transition_dataframe,
     validate_transition_dataframe,
 )
+
+from utils.offline_rl.enviroment import CharityGasEnv
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -128,6 +132,17 @@ def parse_args() -> argparse.Namespace:
         help="Optional JSON path to save evaluation report",
     )
     parser.add_argument(
+        "--reward-scale",
+        type=float,
+        default=1e6,
+        help="Reward scaling factor (divide raw rewards by this) for stable training",
+    )
+    parser.add_argument(
+        "--eval-all",
+        action="store_true",
+        help="Evaluate all model checkpoints in a directory and generate a leaderboard",
+    )
+    parser.add_argument(
         "--fee-gas-scale",
         type=float,
         default=1e9,
@@ -163,17 +178,48 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Disable min-max normalization when creating state vectors",
     )
+    parser.add_argument(
+        "--save-interval",
+        type=int,
+        default=5000,
+        help="Number of steps between model checkpoints during training",
+    )
+    parser.add_argument(
+        "--use-oracle",
+        action="store_true",
+        help="Use Hindsight Oracle to override actions when building from raw",
+    )
+    parser.add_argument(
+        "--oracle-mix-ratio",
+        type=float,
+        default=0.5,
+        help="Probability of using Oracle action (Mix-Policy)",
+    )
+    parser.add_argument(
+        "--suboptimal-mix-ratio",
+        type=float,
+        default=0.2,
+        help="Probability of using Suboptimal action (Mix-Policy)",
+    )
     return parser.parse_args()
 
 def train_toy_iql(dataframe, args) -> int:
-    n = min (args.sample_size, len(dataframe))
+    # Step A: remove evaluation data from training data
+    eval_df = _time_holdout_split(dataframe, args.eval_ratio)
+    # Step B: get old data to train
+    train_df = dataframe[~dataframe.index.isin(eval_df.index)].copy()
+    # Step C: sample n transitions from the training data
+    n = min (args.sample_size, len(train_df))
     if n <= 0:
         print(f"Invalid sample size {args.sample_size}; must be > 0 and less than dataset size.")
         return 1
     
-    # 2) sample n transitions from the dataframe then sort by episode_id and step_index to preserve temporal order within episodes
-    sampled_df = dataframe.sample(n=n, random_state=args.seed)
+    # 2) sample n transitions from the training data then sort by episode_id and step_index to preserve temporal order within episodes
+    sampled_df = train_df.sample(n=n, random_state=args.seed)
     sampled_df = sampled_df.sort_values("timestamp").reset_index(drop=True)
+
+    # Convert to continues action
+    sampled_df['action'] = sampled_df['action'].astype(np.float32) 
 
     # 3) Convert the sampled dataframe to a d3rlpy MDPDataset
     dataset = build_d3rlpy_dataset(sampled_df, mode=args.mode)
@@ -184,25 +230,138 @@ def train_toy_iql(dataframe, args) -> int:
     except ImportError:
         print("d3rlpy is not available. Install d3rlpy in this environment to enable toy training.")
         return 1
+
+    from d3rlpy.models import VectorEncoderFactory
+    encoder = VectorEncoderFactory(hidden_units=[256, 256])
     
-    iql = d3rlpy.algos.DiscreteCQLConfig().create(device="cpu")
+    config = IQLConfig(
+        actor_learning_rate=1e-4,
+        critic_learning_rate=3e-4,
+        batch_size=256,
+        gamma=0.99,
+        expectile=0.8,
+        weight_temp=3.0,
+        actor_encoder_factory=encoder,
+        critic_encoder_factory=encoder,
+        value_encoder_factory=encoder
+    )
+    iql = config.create(device="cpu")
+    iql.build_with_dataset(dataset)
 
-    # 5) fit few steps for santiny check
-    iql.fit(dataset, n_steps=args.n_steps, n_steps_per_epoch=1000)
-
+    # 5) Periodic training with checkpoints
     out_dir = BASE_DIR.parent / "output" 
-    out_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_dir = out_dir / "checkpoints"
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
-    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-    model_path = out_dir / f"toy_iql_{run_id}.d3"
-    learnable_path = out_dir / f"toy_iql_{run_id}.d3rl"
-    iql.save_model(model_path)
-    iql.save(str(learnable_path))
+    print(f"Starting training for {args.n_steps} steps...")
+    
+    steps_done = 0
+    save_interval = args.save_interval
+    
+    while steps_done < args.n_steps:
+        steps_to_run = min(save_interval, args.n_steps - steps_done)
+        
+        # Training chunk
+        iql.fit(
+            dataset, 
+            n_steps=steps_to_run, 
+            n_steps_per_epoch=steps_to_run,
+            show_progress=True
+        )
+        
+        steps_done += steps_to_run
+        
+        # Save indexed checkpoint
+        model_path = checkpoint_dir / f"model_{steps_done}.d3"
+        iql.save_model(model_path)
+        print(f"[+] Saved checkpoint to {model_path} (Step {steps_done}/{args.n_steps})")
 
-    print(f"Toy IQL training complete. Weights saved to {model_path}")
-    print(f"Full learnable checkpoint saved to {learnable_path}")
+    print(f"Full training complete. All checkpoints saved in {checkpoint_dir}")
     return 0
 
+def simulate_policy(eval_df: pd.DataFrame, algo, config) -> dict:
+    # Batching by episode_id
+    grouped = eval_df.groupby("episode_id")
+
+    total_episodes = 0
+    miss_count = 0
+    total_cost_sum = 0.0
+
+    print("\n[+] Simulating policy on evaluation data...")
+
+    for ep_id, ep_df in grouped:
+        total_episodes += 1
+        
+        # Create simulate enviroment for this episode
+        env = CharityGasEnv(episode_df=ep_df, config=config)
+        state, _ = env.reset()
+        
+        ep_cost = 0.0
+        missed = False
+
+        # Start simulation loop
+        while True:
+            # AI (algo) look at state and decide action
+            # Predict returns a continuous action array
+            action = algo.predict(np.array([state]))[0]
+
+            # Send action to enviroment and get the consequence
+            state, reward, terminated, truncated, info = env.step(action)
+
+            ep_cost += info.get("cost", 0.0)
+
+            if terminated or truncated:
+                missed = info.get("deadline_miss", False)
+                break
+        
+        total_cost_sum += ep_cost
+        if missed:
+            miss_count += 1
+    
+    # caculate final metrics
+    miss_rate = miss_count / total_episodes if total_episodes > 0 else 0.0
+    mean_cost = total_cost_sum / total_episodes if total_episodes > 0 else 0.0
+    
+    print(f"Completed {total_episodes} episodes.")
+    print(f"Miss rate: {miss_rate:.4f}")
+    print(f"Mean cost: {mean_cost:.4f}")
+    
+    return {
+        "simulated_cost_per_episode": float(mean_cost),
+        "simulated_deadline_miss_rate": float(miss_rate),
+        "simulated_total_episodes": int(total_episodes)
+    }
+
+def _load_model_iql(model_path: Path, eval_df: pd.DataFrame, mode: str):
+    import d3rlpy
+    import pickle
+    model_path_str = str(model_path)
+    algo = None
+    try:
+        algo = d3rlpy.load_learnable(model_path_str, device="cpu")
+    except (pickle.UnpicklingError, ValueError, RuntimeError, OSError, AttributeError, TypeError):
+        try:
+            # Fallback for weight-only files
+            bootstrap_n = min(2048, len(eval_df))
+            bootstrap_df = eval_df.head(bootstrap_n).copy()
+            bootstrap_dataset = build_d3rlpy_dataset(bootstrap_df, mode=mode)
+            from d3rlpy.algos import IQLConfig
+            from d3rlpy.models import VectorEncoderFactory
+            algo = IQLConfig(
+                actor_learning_rate=1e-4,
+                critic_learning_rate=3e-4,
+                batch_size=256,
+                gamma=0.99,
+                expectile=0.8,
+                weight_temp=3.0,
+                encoder_factory=VectorEncoderFactory(hidden_units=[256, 256]),
+            ).create(device="cpu")
+            algo.build_with_dataset(bootstrap_dataset)
+            algo.load_model(model_path_str)
+        except Exception as e:
+            print(f"Failed to load model {model_path}: {e}")
+            return None
+    return algo
 
 def run_evaluation(dataframe: pd.DataFrame, args: argparse.Namespace) -> int:
     if not (0.0 < args.eval_ratio < 1.0):
@@ -227,9 +386,9 @@ def run_evaluation(dataframe: pd.DataFrame, args: argparse.Namespace) -> int:
         return 1
 
     policies: dict[str, np.ndarray] = {}
-    logged_action = pd.to_numeric(eval_df["action"], errors="coerce").fillna(0).astype(np.int64).to_numpy()
+    logged_action = pd.to_numeric(eval_df["action"], errors="coerce").fillna(0).astype(np.float32).to_numpy()
     policies["logged_policy"] = logged_action
-    policies["execute_now"] = np.ones(len(eval_df), dtype=np.int64)
+    policies["execute_now"] = np.ones(len(eval_df), dtype=np.float32)
 
     gas_column = _pick_gas_column(eval_df)
     if gas_column is not None:
@@ -239,6 +398,57 @@ def run_evaluation(dataframe: pd.DataFrame, args: argparse.Namespace) -> int:
             threshold = float(gas_values.median())
         threshold_action = (gas_values <= threshold).astype(np.int64).to_numpy()
         policies[f"threshold_policy(gas<={threshold:.6g})"] = threshold_action
+
+    if args.eval_all and args.model_path is not None:
+        if not args.model_path.is_dir():
+            print(f"--eval-all requested but --model-path {args.model_path} is not a directory.")
+            return 1
+        
+        model_files = sorted(list(args.model_path.glob("*.d3")), key=lambda x: x.name)
+        if not model_files:
+            print(f"No .d3 models found in {args.model_path}")
+            return 1
+            
+        print(f"[+] Found {len(model_files)} models for leaderboard evaluation.")
+        leaderboard_data = []
+
+        sim_config = TransitionBuildConfig(
+            action_col=args.action_col, 
+            queue_col=args.queue_col,
+            history_window=args.history_window,
+            episode_hours=args.episode_hours,
+            action_threshold=args.action_threshold,
+            deadline_penalty=args.deadline_penalty,
+            queue_penalty=args.queue_penalty,
+            gas_reference_window=args.gas_reference_window,
+            normalize_state= not args.disable_state_normalization,
+        )
+
+        for m_path in model_files:
+            print(f"\n>>> Evaluating {m_path.name}...")
+            algo = _load_model_iql(m_path, eval_df, args.mode)
+            if algo is None: continue
+            
+            sim_res = simulate_policy(eval_df, algo, sim_config)
+            leaderboard_data.append({
+                "model": m_path.name,
+                "deadline_miss_rate": sim_res["simulated_deadline_miss_rate"],
+                "cost_per_episode": sim_res["simulated_cost_per_episode"],
+            })
+
+        lb_df = pd.DataFrame(leaderboard_data)
+        # Sort: Primary = Miss Rate (lower better), Secondary = Cost (lower better)
+        lb_df = lb_df.sort_values(["deadline_miss_rate", "cost_per_episode"]).reset_index(drop=True)
+        lb_df["rank"] = lb_df.index + 1
+        
+        print("\n=== MODEL LEADERBOARD ===")
+        print(lb_df.to_string(index=False))
+        
+        lb_csv = BASE_DIR.parent / "result" / "leaderboard.csv"
+        lb_csv.parent.mkdir(parents=True, exist_ok=True)
+        lb_df.to_csv(lb_csv, index=False)
+        print(f"\n[+] Leaderboard saved to {lb_csv}")
+        return 0
 
     if args.model_path is not None:
         if not args.model_path.exists():
@@ -251,37 +461,25 @@ def run_evaluation(dataframe: pd.DataFrame, args: argparse.Namespace) -> int:
             return 1
 
         states = np.asarray(eval_df["state"].tolist(), dtype=np.float32)
-        model_path_str = str(args.model_path)
+        algo = _load_model_iql(args.model_path, eval_df, args.mode)
+        if algo is None: return 1
 
-        # Try full learnable checkpoint first. If the file was saved via
-        # save_model (weights-only), fallback to explicit algo build + load_model.
-        algo = None
-        try:
-            algo = d3rlpy.load_learnable(model_path_str, device="cpu")
-        except (pickle.UnpicklingError, ValueError, RuntimeError, OSError, AttributeError, TypeError) as first_exc:
-            try:
-                bootstrap_n = min(2048, len(eval_df))
-                bootstrap_df = eval_df.head(bootstrap_n).copy()
-                bootstrap_dataset = build_d3rlpy_dataset(bootstrap_df, mode=args.mode)
-                algo = d3rlpy.algos.DiscreteCQLConfig().create(device="cpu")
-                algo.build_with_dataset(bootstrap_dataset)
-                algo.load_model(model_path_str)
-                print(
-                    "Loaded weight-only checkpoint via DiscreteCQL fallback "
-                    f"(load_learnable failed: {type(first_exc).__name__})."
-                )
-            except (ValueError, RuntimeError, OSError, AttributeError, TypeError) as second_exc:
-                print("Failed to load model for evaluation.")
-                print(f"load_learnable error: {first_exc}")
-                print(f"weights-only fallback error: {second_exc}")
-                return 1
-
-        if algo is None:
-            print("Model loading returned no algorithm instance.")
-            return 1
-
-        predicted_action = np.asarray(algo.predict(states)).reshape(-1).astype(np.int64)
+        predicted_action = np.asarray(algo.predict(states)).reshape(-1).astype(np.float32)
         policies["rl_policy"] = predicted_action
+
+        sim_config = TransitionBuildConfig(
+            action_col=args.action_col, 
+            queue_col=args.queue_col,
+            history_window=args.history_window,
+            episode_hours=args.episode_hours,
+            action_threshold=args.action_threshold,
+            deadline_penalty=args.deadline_penalty,
+            queue_penalty=args.queue_penalty,
+            gas_reference_window=args.gas_reference_window,
+            normalize_state= not args.disable_state_normalization,
+            )
+        # Run simulation with the trained model
+        sim_result = simulate_policy(eval_df, algo, sim_config)
 
     results: dict[str, dict[str, float | int | str | None]] = {}
     for policy_name, action_hat in policies.items():
@@ -302,6 +500,7 @@ def run_evaluation(dataframe: pd.DataFrame, args: argparse.Namespace) -> int:
         "eval_ratio": float(args.eval_ratio),
         "available_policies": list(results.keys()),
         "metrics": results,
+        "simulated_results": sim_result,
         "skipped_estimators": {
             "WIS": "Skipped: behavior policy probabilities/log-propensity are unavailable.",
             "DR": "Skipped: fitted Q and behavior propensity models are not available in current pipeline.",
@@ -368,18 +567,20 @@ def _compute_metrics_for_policy(
     reward = pd.to_numeric(eval_df["reward"], errors="coerce").fillna(0.0).to_numpy(dtype=np.float64)
     episode_id = eval_df["episode_id"]
 
-    action_hat = np.asarray(action_hat).reshape(-1).astype(np.int64)
+    # For continuous actions, exact coverage might be zero, but we keep the logic
+    # or calculate distance-based match later. For now, matching the types.
+    action_hat = np.asarray(action_hat).reshape(-1).astype(np.float32)
     if len(action_hat) != len(eval_df):
         raise ValueError("Predicted action length does not match evaluation dataframe length.")
 
-    matched = action_hat == logged_action
+    matched = np.isclose(action_hat, logged_action, atol=1e-3)
     coverage = float(matched.mean())
 
     expected_return_matched = None
     if matched.any():
         expected_return_matched = float(reward[matched].mean())
 
-    action_rate = float((action_hat == 1).mean())
+    action_rate = float((action_hat > 0).mean())
 
     exec_count_per_episode = pd.Series((action_hat == 1).astype(np.int8)).groupby(episode_id, dropna=False).sum()
     deadline_miss_rate = float((exec_count_per_episode == 0).mean())
@@ -600,6 +801,9 @@ def main() -> int:
                 args.build_from_raw,
                 config,
                 output_path=args.output,
+                use_oracle=args.use_oracle,
+                oracle_ratio=args.oracle_mix_ratio,
+                suboptimal_ratio=args.suboptimal_mix_ratio,
             )
         except ValueError as exc:
             print(f"Transition build configuration/data error: {exc}")
@@ -614,6 +818,14 @@ def main() -> int:
             print(f"Input parquet not found: {args.input}")
             return 1
         dataframe = load_transition_dataframe(args.input)
+
+    # Safety Net: Ensure rewards are scaled before training/eval
+    if "reward" in dataframe.columns:
+        mean_r = dataframe["reward"].abs().mean()
+        if mean_r > 1000:
+            r_scale = args.reward_scale
+            print(f"[!] Warning: Data reward seems unscaled (mean={mean_r:.2f}). Applying scale factor {r_scale}...")
+            dataframe["reward"] = dataframe["reward"] / r_scale
 
     result = validate_transition_dataframe(dataframe, mode=args.mode)
     print(format_validation_report(result))

@@ -41,10 +41,63 @@ def build_state_action_frame(raw_df: pd.DataFrame, config: TransitionBuildConfig
         lag_col = lag_col.groupby(episode_id, dropna=False).ffill()
         gas_history_cols.append(pd.to_numeric(lag_col, errors="coerce").fillna(0.0))
 
-    # We transform lags feature and queue size and time to deadline to numpy array
+    # ---- PSEUDO-MEMPOOL FEATURES (from MEMPOOL_APPROX_AND_READING.md) ----
+
+    # 1) p_t: Block congestion pressure (EIP-1559 mechanism)
+    #    p_t = (gas_used - target_gas) / target_gas, where target_gas = gas_limit / 2
+    #    p_t > 0 means congestion, p_t < 0 means low pressure
+    gas_used = pd.to_numeric(df[config.gas_used_col], errors="coerce").fillna(0.0)
+    gas_limit = pd.to_numeric(df[config.gas_limit_col], errors="coerce").fillna(1.0)
+    target_gas = gas_limit / 2.0
+    p_t = ((gas_used - target_gas) / target_gas.replace(0, 1)).fillna(0.0)
+
+    # 2) m_t: Base fee momentum (log return between consecutive blocks)
+    #    m_t = log(baseFee_t) - log(baseFee_{t-1})
+    #    Positive momentum = rising demand pressure
+    gas_price = pd.to_numeric(df[config.gas_col], errors="coerce").fillna(1.0).clip(lower=1.0)
+    log_gas = np.log(gas_price)
+    m_t = log_gas.groupby(episode_id, dropna=False).diff().fillna(0.0)
+
+    # 3) a_t: Base fee acceleration (second derivative)
+    #    a_t = m_t - m_{t-1}
+    a_t = m_t.groupby(episode_id, dropna=False).diff().fillna(0.0)
+
+    # 4) u_t: Transaction surprise (zscore of deviation from moving average)
+    #    Captures bursts beyond local baseline
+    tx_count = pd.to_numeric(df[config.transaction_count_col], errors="coerce").fillna(0.0)
+    tx_ma = tx_count.groupby(episode_id, dropna=False).transform(
+        lambda x: x.rolling(window=128, min_periods=1).mean()
+    )
+    tx_deviation = tx_count - tx_ma
+    tx_std = tx_count.groupby(episode_id, dropna=False).transform(
+        lambda x: x.rolling(window=128, min_periods=1).std().fillna(1.0).replace(0, 1)
+    )
+    u_t = (tx_deviation / tx_std).fillna(0.0)
+
+    # 5) b_t: Latent backlog proxy (pseudo-mempool hidden state estimate)
+    #    b_t = max(0, rho * b_{t-1} + alpha * p_t + beta * u_t)
+    #    Coefficients are fixed during experiment
+    rho, alpha, beta = 0.95, 0.3, 0.2
+    b_values = np.zeros(len(df), dtype=np.float64)
+    prev_ep = None
+    for i in range(len(df)):
+        ep = episode_id.iloc[i]
+        if ep != prev_ep:
+            b_values[i] = 0.0
+            prev_ep = ep
+        else:
+            b_values[i] = max(0.0, rho * b_values[i - 1] + alpha * p_t.iloc[i] + beta * u_t.iloc[i])
+    b_t = pd.Series(b_values, index=df.index)
+
+    # Build state matrix: [gas_t, gas_t-1, gas_t-2, p_t, m_t, a_t, u_t, b_t, queue, time]
     state_matrix = np.column_stack(
         [
             *(series.to_numpy(dtype=np.float32) for series in gas_history_cols),
+            p_t.to_numpy(dtype=np.float32),
+            m_t.to_numpy(dtype=np.float32),
+            a_t.to_numpy(dtype=np.float32),
+            u_t.to_numpy(dtype=np.float32),
+            b_t.to_numpy(dtype=np.float32),
             queue_size.to_numpy(dtype=np.float32),
             time_to_deadline.to_numpy(dtype=np.float32),
         ]
@@ -71,7 +124,7 @@ def build_state_action_frame(raw_df: pd.DataFrame, config: TransitionBuildConfig
             "episode_id": episode_id,
             "step_index": step_index,
             "state": state_series,
-            "action": action.astype(np.int8),
+            "action": action.astype(np.float32),
             "gas_t": pd.to_numeric(df[config.gas_col], errors="coerce").fillna(0.0),
             "queue_size": queue_size.astype(np.float32),
             "time_to_deadline": time_to_deadline.astype(np.float32),
@@ -128,9 +181,8 @@ def _derive_action(df: pd.DataFrame, config: TransitionBuildConfig) -> pd.Series
         raise ValueError(
             f"action_col '{config.action_col}' has no numeric values; cannot derive discrete action."
         )
-    # this will pass an argument action_threshold to the config object or CLI
-    # and return the action as a binary value (0 or 1)
-    return (action_source.fillna(0.0) > config.action_threshold).astype(np.int8)
+    # We cast to continuous float type for Continuous RL formulations
+    return (action_source.fillna(0.0) > config.action_threshold).astype(np.float32)
 
 
 def _derive_queue(

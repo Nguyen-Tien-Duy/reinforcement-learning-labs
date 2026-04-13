@@ -1,0 +1,84 @@
+{
+  "generated_at": "2026-04-13T11:13:51",
+  "rows_total": 5224088,
+  "rows_eval": 1044818,
+  "eval_ratio": 0.2,
+  "available_policies": [
+    "logged_policy",
+    "execute_now",
+    "threshold_policy(gas<=6.08241e+07)",
+    "rl_policy"
+  ],
+  "metrics": {
+    "logged_policy": {
+      "coverage": 1.0,
+      "expected_return_matched": 1833588.5497110502,
+      "action_rate": 0.5155271061562875,
+      "deadline_miss_rate": 0.0,
+      "total_cost_per_episode": 578.6394438746803,
+      "total_cost_sum": 85059.998249578,
+      "execution_proxy_per_episode": 3440.5102040816328,
+      "fee_gas_scale": 1000000000.0,
+      "execution_proxy_mode": "queue",
+      "execute_count_per_episode_proxy": 3664.1632653061224,
+      "adjusted_return": 1833588.5497110502,
+      "reward_variance_episode": 1.774052795651448e+21,
+      "cvar_episode_alpha_0.1": -3619107253.4666667
+    },
+    "execute_now": {
+      "coverage": 0.5155271061562875,
+      "expected_return_matched": 3556725.971223396,
+      "action_rate": 1.0,
+      "deadline_miss_rate": 0.0,
+      "total_cost_per_episode": 578.6394438746803,
+      "total_cost_sum": 85059.998249578,
+      "execution_proxy_per_episode": 3440.5102040816328,
+      "fee_gas_scale": 1000000000.0,
+      "execution_proxy_mode": "queue",
+      "execute_count_per_episode_proxy": 7107.60544217687,
+      "adjusted_return": 1833588.6473357084,
+      "reward_variance_episode": 1.7740527969995768e+21,
+      "cvar_episode_alpha_0.1": -3619106586.8
+    },
+    "threshold_policy(gas<=6.08241e+07)": {
+      "coverage": 0.47361071497619683,
+      "expected_return_matched": 1105974.9228938015,
+      "action_rate": 0.5,
+      "deadline_miss_rate": 0.1292517006802721,
+      "total_cost_per_episode": 69.88531293157823,
+      "total_cost_sum": 10273.141000942,
+      "execution_proxy_per_episode": 1870.3265306122448,
+      "fee_gas_scale": 1000000000.0,
+      "execution_proxy_mode": "queue",
+      "execute_count_per_episode_proxy": 3553.802721088435,
+      "adjusted_return": 523801.5739774775,
+      "reward_variance_episode": 8.884732265132417e+18,
+      "cvar_episode_alpha_0.1": -38806944.93333333
+    },
+    "rl_policy": {
+      "coverage": 0.9343818732066255,
+      "expected_return_matched": 1992052.4437275354,
+      "action_rate": 0.5625391216460666,
+      "deadline_miss_rate": 0.0,
+      "total_cost_per_episode": 570.2932389178434,
+      "total_cost_sum": 83833.10612092298,
+      "execution_proxy_per_episode": 3369.503401360544,
+      "fee_gas_scale": 1000000000.0,
+      "execution_proxy_mode": "queue",
+      "execute_count_per_episode_proxy": 3998.3061224489797,
+      "adjusted_return": 1861337.6938959705,
+      "reward_variance_episode": 1.8108532773176331e+21,
+      "cvar_episode_alpha_0.1": -3508630235.4666667
+    }
+  },
+  "simulated_results": {
+    "simulated_cost_per_episode": 105305376.0,
+    "simulated_deadline_miss_rate": 0.07482993197278912,
+    "simulated_total_episodes": 147
+  },
+  "skipped_estimators": {
+    "WIS": "Skipped: behavior policy probabilities/log-propensity are unavailable.",
+    "DR": "Skipped: fitted Q and behavior propensity models are not available in current pipeline.",
+    "FQE": "Skipped: dedicated FQE training/evaluation pipeline is not implemented yet."
+  }
+}

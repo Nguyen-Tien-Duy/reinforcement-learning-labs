@@ -7,7 +7,7 @@
 - [x] Transition schema validator implemented
 - [x] d3rlpy dataset conversion works
 - [x] Codebase split into maintainable modules
-- [ ] Real logged action source integrated (currently proxy)
+- [x] Real logged action source integrated (currently proxy)
 - [ ] Research-grade evaluation (OPE + CI) completed
 - [ ] Final baseline comparison table completed
 

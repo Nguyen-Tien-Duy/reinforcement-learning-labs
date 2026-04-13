@@ -80,10 +80,6 @@ def _to_state_array(series: pd.Series) -> np.ndarray:
 def _to_action_array(series: pd.Series) -> np.ndarray:
     numeric = pd.to_numeric(series, errors="coerce")
     if numeric.notna().all():
-        # Use integer array if every value is an integer-valued number.
-        rounded = np.rint(numeric.to_numpy(dtype=np.float64))
-        if np.allclose(rounded, numeric.to_numpy(dtype=np.float64)):
-            return rounded.astype(np.int64)
         return numeric.to_numpy(dtype=np.float32)
 
     arrays: list[np.ndarray] = []
