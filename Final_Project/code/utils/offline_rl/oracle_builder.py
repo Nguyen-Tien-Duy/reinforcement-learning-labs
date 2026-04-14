@@ -12,7 +12,12 @@ def _compute_trajectory_njit(
     Q_max: int, 
     C_base: float, 
     C_mar: float, 
-    omega: float
+    beta: float,
+    alpha: float,
+    episode_hours: float,
+    reward_scale: float,
+    deadline_penalty: float,
+    execution_capacity: float
 ) -> Tuple[np.ndarray, np.ndarray, float]:
     """
     Core DP calculation compiled with Numba for lightning speed.
@@ -24,19 +29,37 @@ def _compute_trajectory_njit(
     V = np.full((T, Q_max + 1), np.inf, dtype=np.float32)
     Policy = np.zeros((T, Q_max + 1), dtype=np.int32)
     
-    # Boundary condition (at T-1, we MUST clear all pending)
+    # Boundary condition (at T-1, we choose between execution and penalty)
     Q_array = np.arange(Q_max + 1)
-    V[T-1, :] = gas_prices[T-1] * (C_base * (Q_array > 0) + C_mar * Q_array)
-    Policy[T-1, :] = Q_array.astype(np.int32)
+    
+    for Q in range(Q_max + 1):
+        # Resulting queue if we execute n: Q_final = Q - n
+        # But at T-1, we only have one action. 
+        # We can either execute everything or wait.
+        v_q_pos = 1.0 if Q > 0 else 0.0
+        cost_exec = (gas_prices[T-1] / reward_scale) * (C_base * v_q_pos + C_mar * Q)
+        cost_miss = (deadline_penalty / reward_scale) * v_q_pos
+        
+        if cost_exec < cost_miss:
+            V[T-1, Q] = cost_exec
+            Policy[T-1, Q] = Q
+        else:
+            V[T-1, Q] = cost_miss
+            Policy[T-1, Q] = 0
     
     # Backward Induction
     for t in range(T - 2, -1, -1):
         g_t = gas_prices[t]
-        w_t = incoming_requests[t]
+        # In 'Arrival-before-action' logic, w_next arrives at start of next step
+        w_next = incoming_requests[t+1] 
         for Q in range(Q_max + 1):
-            n_array = np.arange(0, Q + 1)
-            exec_cost = g_t * (C_base * (n_array > 0) + C_mar * n_array)
-            Q_next = (Q - n_array + w_t)
+            # n_array is limited by both queue and block capacity
+            n_array = np.arange(0, min(Q, int(execution_capacity)) + 1)
+            # Scaled execution cost
+            exec_cost = (g_t / reward_scale) * (C_base * (n_array > 0) + C_mar * n_array)
+            
+            # Q_next is the queue seen at start of next step (after next arrival)
+            Q_next = (Q - n_array + w_next)
             
             # Manual clip for Numba compatibility
             Q_next_clipped = np.zeros(len(Q_next), dtype=np.int32)
@@ -45,8 +68,13 @@ def _compute_trajectory_njit(
                 if val < 0: val = 0
                 if val > Q_max: val = Q_max
                 Q_next_clipped[i] = int(val)
-                
-            delay_cost = omega * Q_next_clipped
+
+            # Exponential urgency penalty mirroring environment logic (scaled penalty per block)
+            remaining_q = Q - n_array
+            time_to_deadline = episode_hours - (t * (episode_hours / T)) 
+            time_ratio = max(0.0, min(1.0, time_to_deadline / episode_hours))
+            delay_cost = (beta / reward_scale) * remaining_q * np.exp(alpha * (1.0 - time_ratio))
+            
             total_cost = exec_cost + delay_cost + V[t+1, Q_next_clipped]
             
             best_idx = np.argmin(total_cost)
@@ -56,15 +84,23 @@ def _compute_trajectory_njit(
     # Forward Tracing
     optimal_n = np.zeros(T, dtype=np.int32)
     optimal_a = np.zeros(T, dtype=np.float32) 
-    current_Q = 0.0
+    
+    # Initial state: step 0 starts with incoming_requests[0]
+    current_Q = incoming_requests[0]
+    
     for t in range(T):
         idx_Q = int(min(current_Q, Q_max))
         n_star = Policy[t, idx_Q]
         optimal_n[t] = n_star
         optimal_a[t] = float(n_star / idx_Q) if idx_Q > 0 else 0.0
-        current_Q = idx_Q - n_star + incoming_requests[t]
         
-    return optimal_a, optimal_n, float(V[0, 0])
+        # Next step's queue: remaining plus next arrival
+        if t < T - 1:
+            current_Q = (current_Q - n_star) + incoming_requests[t+1]
+        else:
+            current_Q = current_Q - n_star
+            
+    return optimal_a, optimal_n, float(V[0, int(min(incoming_requests[0], Q_max))])
 
 def compute_god_view_trajectory(
     gas_prices: np.ndarray, 
@@ -72,7 +108,12 @@ def compute_god_view_trajectory(
     Q_max: int = 1000, 
     C_base: float = 21000.0, 
     C_mar: float = 15000.0, 
-    omega: float = 0.01
+    beta: float = 0.01,
+    alpha: float = 3.0,
+    episode_hours: float = 24.0,
+    reward_scale: float = 1e6,
+    deadline_penalty: float = 1000.0,
+    execution_capacity: float = 500.0
 ) -> Tuple[np.ndarray, np.ndarray, float]:
     """
     Wrapper for the Numba-optimized trajectory solver.
@@ -83,29 +124,38 @@ def compute_god_view_trajectory(
         int(Q_max), 
         float(C_base), 
         float(C_mar), 
-        float(omega)
+        float(beta),
+        float(alpha),
+        float(episode_hours),
+        float(reward_scale),
+        float(deadline_penalty),
+        float(execution_capacity)
     )
 
 def _process_episode_worker(args):
     """
     Worker function for parallel processing of episodes.
     """
-    ep_df, gas_scale, C_base, C_mar, omega, oracle_ratio, suboptimal_ratio, seed_val = args
+    ep_df, gas_scale, C_base, C_mar, beta, alpha, ep_hours, r_scale, d_penalty, exec_cap, \
+    oracle_ratio, suboptimal_ratio, seed_val = args
     
     # Local seed for this worker/episode
     np.random.seed(seed_val)
     
     ep_df = ep_df.sort_values("step_index")
     gas_prices_gwei = ep_df["gas_t"].to_numpy(dtype=np.float32) / gas_scale
-    incoming = np.ones(len(ep_df), dtype=np.float32)
+    # Use real-world transaction arrivals
+    incoming = ep_df["transaction_count"].to_numpy(dtype=np.float32)
     
     opt_a, _, _ = compute_god_view_trajectory(
         gas_prices=gas_prices_gwei,
         incoming_requests=incoming,
-        Q_max=1000,
-        C_base=C_base,
-        C_mar=C_mar,
-        omega=omega
+        beta=beta,
+        alpha=alpha,
+        episode_hours=ep_hours,
+        reward_scale=r_scale,
+        deadline_penalty=d_penalty,
+        execution_capacity=exec_cap
     )
     
     behavior_a = ep_df["action"].to_numpy(dtype=np.float32)
@@ -134,7 +184,12 @@ def apply_oracle_to_episodes(
     gas_scale = getattr(config, "gas_to_gwei_scale", 1e9)
     C_base = getattr(config, "C_base", 21000.0)
     C_mar = getattr(config, "C_mar", 15000.0)
-    omega = getattr(config, "urgency_beta", 0.01)
+    beta = getattr(config, "urgency_beta", 0.01)
+    alpha = getattr(config, "urgency_alpha", 3.0)
+    ep_hours = float(config.episode_hours)
+    r_scale = getattr(config, "reward_scale", 1e6)
+    d_penalty = getattr(config, "deadline_penalty", 100.0)
+    exec_cap = getattr(config, "execution_capacity", 500.0)
     base_seed = getattr(config, "seed", 42)
     
     # Prepare tasks
@@ -148,7 +203,8 @@ def apply_oracle_to_episodes(
             ep_seed = base_seed # Fallback
             
         tasks.append((
-            ep_df, gas_scale, C_base, C_mar, omega, 
+            ep_df, gas_scale, C_base, C_mar, beta, alpha, ep_hours,
+            r_scale, d_penalty, exec_cap,
             oracle_ratio, suboptimal_ratio, ep_seed
         ))
     

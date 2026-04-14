@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import pickle
+import hashlib
+from dataclasses import asdict
 from datetime import datetime
 import argparse
 from pathlib import Path
@@ -169,9 +171,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--history-window", type=int, default=3)
     parser.add_argument("--episode-hours", type=int, default=24)
     parser.add_argument("--action-threshold", type=float, default=0.0)
-    parser.add_argument("--deadline-penalty", type=float, default=100.0)
-    parser.add_argument("--queue-penalty", type=float, default=0.0)
-    parser.add_argument("--execute-penalty", type=float, default=0.0)
+    parser.add_argument("--deadline-penalty", type=float, default=2000000.0)
+    parser.add_argument("--urgency-beta", type=float, default=100.0)
+    parser.add_argument("--urgency-alpha", type=float, default=3.0)
+    parser.add_argument("--C-base", type=float, default=21000.0)
+    parser.add_argument("--C-mar", type=float, default=15000.0)
     parser.add_argument("--gas-reference-window", type=int, default=128)
     parser.add_argument(
         "--disable-state-normalization",
@@ -201,7 +205,41 @@ def parse_args() -> argparse.Namespace:
         default=0.2,
         help="Probability of using Suboptimal action (Mix-Policy)",
     )
+    parser.add_argument(
+        "--skip-validation", 
+        action="store_true", 
+        help="Skip data validation for faster startup (use only if data is already known to be valid)"
+    )
+    
+    parser.add_argument(
+        "--limit-eval-episodes",
+        type=int,
+        default=50,
+        help="Limit number of episodes to simulate during evaluation for speed (default: 50)"
+    )
+    
     return parser.parse_args()
+
+def load_normalization_params(data_dir: Path) -> tuple[np.ndarray | None, np.ndarray | None]:
+    """Safely load state normalization parameters from the Data directory."""
+    params_path = data_dir / "state_norm_params.json"
+    if not params_path.exists():
+        print(f"[!] Warning: Normalization file {params_path} not found. Using raw observations.")
+        return None, None
+    try:
+        with open(params_path, "r") as f:
+            params = json.load(f)
+            return np.array(params["mins"], dtype=np.float32), np.array(params["maxs"], dtype=np.float32)
+    except Exception as e:
+        print(f"[!] Error loading normalization params: {e}")
+        return None, None
+
+def calculate_config_hash(config: TransitionBuildConfig) -> str:
+    """Computes a stable MD5 hash of the configuration to lock data to code."""
+    config_dict = asdict(config)
+    # Ensure stable ordering for hashing
+    config_json = json.dumps(config_dict, sort_keys=True)
+    return hashlib.md5(config_json.encode("utf-8")).hexdigest()
 
 def train_toy_iql(dataframe, args) -> int:
     # Step A: remove evaluation data from training data
@@ -214,12 +252,23 @@ def train_toy_iql(dataframe, args) -> int:
         print(f"Invalid sample size {args.sample_size}; must be > 0 and less than dataset size.")
         return 1
     
-    # 2) sample n transitions from the training data then sort by episode_id and step_index to preserve temporal order within episodes
-    sampled_df = train_df.sample(n=n, random_state=args.seed)
-    sampled_df = sampled_df.sort_values("timestamp").reset_index(drop=True)
+    # 2) Episode-Based Sampling: Preserve temporal trajectories
+    unique_episodes = train_df["episode_id"].unique()
+    # Estimate episodes needed for the requested sample_size
+    avg_ep_len = train_df.groupby("episode_id").size().mean()
+    n_episodes = max(1, int(n / avg_ep_len))
+    
+    import random
+    random.seed(args.seed)
+    sampled_ep_ids = random.sample(list(unique_episodes), min(len(unique_episodes), n_episodes))
+    
+    sampled_df = train_df[train_df["episode_id"].isin(sampled_ep_ids)].copy()
+    sampled_df = sampled_df.sort_values(["episode_id", "timestamp"]).reset_index(drop=True)
+    
+    print(f"[+] Sampled {len(sampled_ep_ids)} episodes ({len(sampled_df)} transitions) for training.")
 
     # Convert to continues action
-    sampled_df['action'] = sampled_df['action'].astype(np.float32) 
+    sampled_df['action'] = sampled_df['action'].astype(np.float32).values.reshape(-1, 1)
 
     # 3) Convert the sampled dataframe to a d3rlpy MDPDataset
     dataset = build_d3rlpy_dataset(sampled_df, mode=args.mode)
@@ -254,46 +303,48 @@ def train_toy_iql(dataframe, args) -> int:
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"Starting training for {args.n_steps} steps...")
-    
-    steps_done = 0
-    save_interval = args.save_interval
-    
-    while steps_done < args.n_steps:
-        steps_to_run = min(save_interval, args.n_steps - steps_done)
-        
-        # Training chunk
-        iql.fit(
-            dataset, 
-            n_steps=steps_to_run, 
-            n_steps_per_epoch=steps_to_run,
-            show_progress=True
-        )
-        
-        steps_done += steps_to_run
-        
-        # Save indexed checkpoint
-        model_path = checkpoint_dir / f"model_{steps_done}.d3"
-        iql.save_model(model_path)
-        print(f"[+] Saved checkpoint to {model_path} (Step {steps_done}/{args.n_steps})")
+    run_name = f"IQL_HardPenalty_{datetime.now().strftime('%Y%m%d_%H%M')}"
 
-    print(f"Full training complete. All checkpoints saved in {checkpoint_dir}")
+    iql.fit(
+        dataset,
+        n_steps=args.n_steps,           
+        n_steps_per_epoch=args.save_interval, 
+        show_progress=True,
+        experiment_name=run_name
+    )
+
+    print(f"Full training complete. Models saved in d3rlpy_logs/{run_name}")
     return 0
 
-def simulate_policy(eval_df: pd.DataFrame, algo, config) -> dict:
+def simulate_policy(eval_df: pd.DataFrame, algo, config, args: argparse.Namespace) -> dict:
     # Batching by episode_id
     grouped = eval_df.groupby("episode_id")
 
     total_episodes = 0
-    miss_count = 0
     total_cost_sum = 0.0
+    miss_count = 0
+    
+    # Optional: limit number of episodes for faster evaluation
+    episode_list = list(grouped)
+    if args.limit_eval_episodes and args.limit_eval_episodes > 0:
+        import random
+        random.seed(args.seed)
+        if len(episode_list) > args.limit_eval_episodes:
+            episode_list = random.sample(episode_list, args.limit_eval_episodes)
+            print(f"[+] Sampling {args.limit_eval_episodes} random episodes for fast evaluation...")
 
     print("\n[+] Simulating policy on evaluation data...")
 
-    for ep_id, ep_df in grouped:
+    # Synchronization: Load normalization params for the Env
+    mins, maxs = load_normalization_params(BASE_DIR.parent / "Data")
+
+    for ep_id, ep_df in episode_list:
         total_episodes += 1
         
         # Create simulate enviroment for this episode
         env = CharityGasEnv(episode_df=ep_df, config=config)
+        env.mins = mins
+        env.maxs = maxs
         state, _ = env.reset()
         
         ep_cost = 0.0
@@ -404,7 +455,11 @@ def run_evaluation(dataframe: pd.DataFrame, args: argparse.Namespace) -> int:
             print(f"--eval-all requested but --model-path {args.model_path} is not a directory.")
             return 1
         
-        model_files = sorted(list(args.model_path.glob("*.d3")), key=lambda x: x.name)
+        import re
+        def natural_sort_key(s):
+            return [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', str(s))]
+
+        model_files = sorted(list(args.model_path.glob("*.d3")), key=lambda x: natural_sort_key(x.name))
         if not model_files:
             print(f"No .d3 models found in {args.model_path}")
             return 1
@@ -422,6 +477,13 @@ def run_evaluation(dataframe: pd.DataFrame, args: argparse.Namespace) -> int:
             queue_penalty=args.queue_penalty,
             gas_reference_window=args.gas_reference_window,
             normalize_state= not args.disable_state_normalization,
+            urgency_alpha=args.urgency_alpha,
+            urgency_beta=args.urgency_beta,
+            reward_scale=args.reward_scale,
+            C_base=args.C_base,
+            C_mar=args.C_mar,
+            gas_to_gwei_scale=args.fee_gas_scale,
+            execution_capacity=args.execution_capacity if args.execution_capacity is not None else 500.0,
         )
 
         for m_path in model_files:
@@ -429,7 +491,7 @@ def run_evaluation(dataframe: pd.DataFrame, args: argparse.Namespace) -> int:
             algo = _load_model_iql(m_path, eval_df, args.mode)
             if algo is None: continue
             
-            sim_res = simulate_policy(eval_df, algo, sim_config)
+            sim_res = simulate_policy(eval_df, algo, sim_config, args)
             leaderboard_data.append({
                 "model": m_path.name,
                 "deadline_miss_rate": sim_res["simulated_deadline_miss_rate"],
@@ -444,7 +506,9 @@ def run_evaluation(dataframe: pd.DataFrame, args: argparse.Namespace) -> int:
         print("\n=== MODEL LEADERBOARD ===")
         print(lb_df.to_string(index=False))
         
-        lb_csv = BASE_DIR.parent / "result" / "leaderboard.csv"
+        run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        lb_csv = BASE_DIR.parent / "result" / f"leaderboard{run_id}.csv"
         lb_csv.parent.mkdir(parents=True, exist_ok=True)
         lb_df.to_csv(lb_csv, index=False)
         print(f"\n[+] Leaderboard saved to {lb_csv}")
@@ -477,9 +541,16 @@ def run_evaluation(dataframe: pd.DataFrame, args: argparse.Namespace) -> int:
             queue_penalty=args.queue_penalty,
             gas_reference_window=args.gas_reference_window,
             normalize_state= not args.disable_state_normalization,
-            )
+            urgency_alpha=args.urgency_alpha,
+            urgency_beta=args.urgency_beta,
+            reward_scale=args.reward_scale,
+            C_base=args.C_base,
+            C_mar=args.C_mar,
+            gas_to_gwei_scale=args.fee_gas_scale,
+            execution_capacity=args.execution_capacity if args.execution_capacity is not None else 500.0,
+        )
         # Run simulation with the trained model
-        sim_result = simulate_policy(eval_df, algo, sim_config)
+        sim_result = simulate_policy(eval_df, algo, sim_config, args)
 
     results: dict[str, dict[str, float | int | str | None]] = {}
     for policy_name, action_hat in policies.items():
@@ -790,11 +861,27 @@ def main() -> int:
             episode_hours=args.episode_hours,
             action_threshold=args.action_threshold,
             deadline_penalty=args.deadline_penalty,
-            queue_penalty=args.queue_penalty,
-            execute_penalty=args.execute_penalty,
-            gas_reference_window=args.gas_reference_window,
+            urgency_alpha=args.urgency_alpha,
+            urgency_beta=args.urgency_beta,
+            reward_scale=args.reward_scale,
+            C_base=args.C_base,
+            C_mar=args.C_mar,
+            gas_to_gwei_scale=args.fee_gas_scale,
+            execution_capacity=args.execution_capacity if args.execution_capacity is not None else 500.0,
             normalize_state=not args.disable_state_normalization,
         )
+
+        print("\n" + "="*40)
+        print("TRANSITION BUILD CONFIGURATION")
+        print(f"  Deadline Penalty: {config.deadline_penalty}")
+        print(f"  Urgency Beta:     {config.urgency_beta}")
+        print(f"  Reward Scale:     {config.reward_scale}")
+        print(f"  C_base / C_mar:   {config.C_base} / {config.C_mar}")
+        print(f"  Execution Cap:    {config.execution_capacity}")
+        print("="*40 + "\n")
+
+        config_hash = calculate_config_hash(config)
+        print(f"[+] Config Fingerprint: {config_hash}")
 
         try:
             dataframe = build_transitions_from_parquet(
@@ -804,6 +891,7 @@ def main() -> int:
                 use_oracle=args.use_oracle,
                 oracle_ratio=args.oracle_mix_ratio,
                 suboptimal_ratio=args.suboptimal_mix_ratio,
+                config_hash=config_hash,
             )
         except ValueError as exc:
             print(f"Transition build configuration/data error: {exc}")
@@ -827,12 +915,15 @@ def main() -> int:
             print(f"[!] Warning: Data reward seems unscaled (mean={mean_r:.2f}). Applying scale factor {r_scale}...")
             dataframe["reward"] = dataframe["reward"] / r_scale
 
-    result = validate_transition_dataframe(dataframe, mode=args.mode)
-    print(format_validation_report(result))
+    if args.skip_validation:
+        print("[!] Skipping data validation as requested. Startup will be faster.")
+    else:
+        result = validate_transition_dataframe(dataframe, mode=args.mode)
+        print(format_validation_report(result))
 
-    if not result.passed:
-        print("Validation failed. Training is blocked until required transition fields are fixed.")
-        return 2
+        if not result.passed:
+            print("Validation failed. Training is blocked until required transition fields are fixed.")
+            return 2
 
     if args.evaluate:
         return run_evaluation(dataframe, args)

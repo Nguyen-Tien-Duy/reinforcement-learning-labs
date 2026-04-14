@@ -1,145 +1,133 @@
+import numpy as np
+import pandas as pd
 import gymnasium as gym
 from gymnasium import spaces
-import numpy as np
+from .config import TransitionBuildConfig
 
 class CharityGasEnv(gym.Env):
-    def __init__(self, episode_df, config):
-        super(CharityGasEnv, self).__init__()
+    metadata = {"render_modes": ["human"]}
+
+    def __init__(self, episode_df: pd.DataFrame, config: TransitionBuildConfig):
+        super().__init__()
+        self.episode_df = episode_df.reset_index(drop=True)
         self.config = config
         
-        # Action space: Continuous percentage [0.0, 1.0]
+        # Action: Continuous ratio [0, 1]
         self.action_space = spaces.Box(low=0.0, high=1.0, shape=(1,), dtype=np.float32)
-
-        # State has 10 dimensions: gas_t, gas_t-1, gas_t-2, p_t, m_t, a_t, u_t, b_t, queue_size, time_to_deadline
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(10,), dtype=np.float32)
-
-        # Episolde_df contain relay data of 1 day (24h)
-        self.episode_df = episode_df.reset_index(drop=True)
-        self.current_step = 0
-        self.max_step = len(self.episode_df)
         
-        # Dynamic types
+        # Observation space: 11 dimensions
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(11,), dtype=np.float32)
+        
+        self.current_step = 0
+        self.max_step = len(episode_df)
         self.queue_size = 0.0
-        # Calculate real time decrement per step
-        # Example: 24 hours / 7200 steps = 0.00333 hours per step
-        self.time_step_size = float(config.episode_hours) / max(1, self.max_step)
+        self.time_to_deadline = 0.0
+        
+        # Normalization (optional)
+        self.mins = None
+        self.maxs = None
 
-
-    def reset(self, seed = None, options=None):
+    def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         self.current_step = 0
-        self.queue_size = 0.0
         
-        self.time_to_deadline = float(self.config.episode_hours)
-
-        return self._get_obs(), {}
+        row = self.episode_df.iloc[0]
+        state_arr = np.array(row["state"], dtype=np.float32)
+        
+        # Extract initial latent state
+        self.queue_size = float(row.get("queue_size", 0.0))
+        self.time_to_deadline = float(row.get("time_to_deadline", 0.0))
+        
+        return state_arr, {}
 
     def step(self, action):
-        # Get current row
+        if self.current_step >= self.max_step:
+            return np.zeros(11, dtype=np.float32), 0.0, True, False, {}
+
+        a_t = np.clip(action[0], 0.0, 1.0)
         row = self.episode_df.iloc[self.current_step]
         
-        # Parse continuous action [0.0, 1.0] from array
-        if isinstance(action, (np.ndarray, list)):
-            a_t = np.clip(float(action[0]), 0.0, 1.0)
+        exec_cap = self.config.execution_capacity
+        
+        # Current actual execution
+        executed_volume = min(np.floor(a_t * self.queue_size), exec_cap)
+        
+        # Calculate remaining queue (pre-arrival of NEXT block) for the urgency penalty
+        remaining_q = max(0.0, self.queue_size - executed_volume)
+        
+        # Advance steps and compute physically consistent queue recurrence (sync with builder)
+        if self.current_step < self.max_step - 1:
+            next_row = self.episode_df.iloc[self.current_step + 1]
+            arrival_next = float(next_row.get("transaction_count", 0.0))
+            self.queue_size = remaining_q + arrival_next
+            self.time_to_deadline = float(next_row.get("time_to_deadline", 0.0))
         else:
-            a_t = np.clip(float(action), 0.0, 1.0)
+            self.queue_size = remaining_q
+            self.time_to_deadline = 0.0
         
-        # New transaction arrive
-        arrival_t = 1.0 # We assume that 1 transaction arrive every step
-        
-        # Execute continuous volume n_t = floor(a_t * Q_t)
-        executed_volume = float(np.floor(a_t * self.queue_size))
-        self.queue_size = self.queue_size - executed_volume + arrival_t
-
-        # Equation 3: tau_{t+1} = max(0, tau_t - time_step_size)
-        self.time_to_deadline = max(0.0, self.time_to_deadline - self.time_step_size)
-
-        # Time jump
-        self.current_step += 1
-
-        # Equation 4: Terminal flags (done_t)
-        # Unlike discrete, episode only ends when we reach the deadline naturally.
-        terminated = bool(self.time_to_deadline <= 0)
-        out_of_data = (self.current_step >= self.max_step)
-        truncated = bool(out_of_data)
-
-        # Equation 5: Deadline miss (m_e)
-        deadline_miss = bool(self.queue_size > 0 and self.time_to_deadline <= 0)
-
-        # Component 1: Efficiency (marginal utility) with unit conversion (Gwei)
-        gas_scale = getattr(self.config, "gas_to_gwei_scale", 1e9)
+        # 5. Reward Calculation (Algebraic mirror of Builder)
+        gas_scale = self.config.gas_to_gwei_scale
         gas_t = float(row["gas_t"]) / gas_scale
         gas_ref = float(row.get("gas_reference", row["gas_t"])) / gas_scale
         
-        C_base = getattr(self.config, "C_base", 21000.0)
-        C_mar = getattr(self.config, "C_mar", 15000.0)
+        C_base = self.config.C_base
+        C_mar = self.config.C_mar
 
+        # Efficiency
         R_eff = executed_volume * C_mar * (gas_ref - gas_t)
         R_overhead = C_base * gas_t * float(executed_volume > 0)
-        execution_reward = R_eff - R_overhead
+        execution_reward = (R_eff - R_overhead) / self.config.reward_scale
         
-        # Component 2: Urgency (cost of delay, risk-averse near deadline)
-        beta = getattr(self.config, "urgency_beta", 0.01)
-        alpha = getattr(self.config, "urgency_alpha", 3.0)
-        max_time = float(self.config.episode_hours)
-        time_ratio = min(1.0, max(0.0, self.time_to_deadline / max_time))
+        # Urgency (based on remaining queue AFTER action but BEFORE next arrivals)
+        beta = self.config.urgency_beta
+        alpha = self.config.urgency_alpha
+        max_time_h = float(self.config.episode_hours)
+        t_denom = max_time_h * 3600.0 if self.time_to_deadline > 24 else max_time_h
+        t_curr = float(row.get("time_to_deadline", 1.0))
+        time_ratio = np.clip(t_curr / max(1e-6, t_denom), 0.0, 1.0)
         
-        urgency_penalty = beta * self.queue_size * np.exp(alpha * (1.0 - time_ratio))
-
-        reward = execution_reward - urgency_penalty
-
-        # Component 3: Catastrophe (hard SLA violation)
-        if deadline_miss:
-            reward -= self.config.deadline_penalty
-
-        # Scale Reward exacly the same with building dataset
-        reward_scale = getattr(self.config, "reward_scale", 1e6)
-        reward = reward / reward_scale
+        urgency_penalty = (beta / self.config.reward_scale) * remaining_q * np.exp(alpha * (1.0 - time_ratio))
+        
+        total_reward = execution_reward - urgency_penalty
+        
+        self.current_step += 1
+        
+        # 6. Terminal status
+        out_of_data = (self.current_step >= self.max_step)
+        terminated = bool(out_of_data)
+        truncated = bool(out_of_data)
+        
+        # SLA Violation (at episode end)
+        if terminated and self.queue_size > 0:
+            penalty = (self.config.deadline_penalty / self.config.reward_scale)
+            total_reward -= penalty
 
         info = {
-            "deadline_miss": deadline_miss,
-            "cost": float(gas_t * (C_base * float(executed_volume > 0) + C_mar * executed_volume))
+            "executed": executed_volume,
+            "q_t": self.queue_size,
+            "cost": gas_t * executed_volume,
+            "reward_components": {
+                "efficiency": R_eff,
+                "overhead": R_overhead,
+                "urgency": urgency_penalty
+            }
         }
-
-        return self._get_obs(), reward, terminated, truncated, info
-
-    def _get_obs(self):
-        # Get the current row
-        idx = min(self.current_step, self.max_step - 1)
-        row = self.episode_df.iloc[idx]
         
-        # GET PRE-NORMALIZED STATE ARRAY FROM HISTORICAL LOGS (Crucial!)
-        # In the parquet file, the "state" column was already normalized (0-1) by build_state_action.py
-        base_state = np.array(row["state"], dtype=np.float32).copy()
-        
-        # The only issue: Simulator's Queue may be higher or lower than historical logs.
-        # We need to calculate the Compression Ratio (Max Queue) to scale self.queue_size accordingly.
-        max_raw_q = self.episode_df["queue_size"].max()
-        
-        if max_raw_q > 0:
-            # Find the row with the largest queue to see how much the AI compressed it
-            max_row = self.episode_df[self.episode_df["queue_size"] == max_raw_q].iloc[0]
-            # State: [gas0, gas1, gas2, p_t, m_t, a_t, u_t, b_t, queue, time]. Queue is at index 8
-            norm_val = max_row["state"][8] 
-            queue_max_estimate = max_raw_q / (norm_val + 1e-8)
-            
-            # Scale down the Simulator's virtual Queue using that ratio
-            norm_queue = self.queue_size / queue_max_estimate
+        # Construct next state (compute final physical state)
+        if self.current_step < self.max_step:
+            next_row = self.episode_df.iloc[self.current_step]
+            next_obs = np.array(next_row["state"], dtype=np.float32).copy()
         else:
-            norm_queue = 0.0
-            
-        # Overwrite the current Queue into the State array
-        base_state[8] = norm_queue
+            row = self.episode_df.iloc[self.current_step - 1]
+            next_obs = np.array(row["state"], dtype=np.float32).copy()
 
-        # Overwrite the current Time-to-Deadline into the State array
-        # Normalize time the same way: divide by episode_hours (24) to get range [0, 1]
-        base_state[9] = self.time_to_deadline / float(self.config.episode_hours)
+        # Inject physically consistent queue and time (synced with builder)
+        if self.mins is not None and self.maxs is not None:
+            denom = np.where((self.maxs - self.mins) == 0, 1.0, (self.maxs - self.mins))
+            next_obs[8] = (self.queue_size - self.mins[8]) / denom[8]
+            next_obs[9] = (self.time_to_deadline - self.mins[9]) / denom[9]
+        else:
+            next_obs[8] = self.queue_size
+            next_obs[9] = self.time_to_deadline
 
-        return base_state
-
-        
-         
-        
-
-        
-        
+        return next_obs, total_reward, terminated, truncated, info

@@ -17,6 +17,25 @@ python ./Final_Project/code/simple-offline.py \
   --action-threshold 250 \
   --output ./Final_Project/Data/transitions_proxy.parquet
 ```
+```bash
+# 1. Thiết lập đường dẫn
+         export PYTHONPATH=$PYTHONPATH:$(pwd)/Final_Project/code
+
+         # 2. Tạo Dataset Hardened V2
+         ./venv/bin/python ./Final_Project/code/simple-offline.py \
+                 --build-from-raw Final_Project/Data/data_2024-04-10_2026-04-10.parquet \
+                 --output Final_Project/Data/transitions_hardened_v2.parquet \
+                 --action-col gas_used \
+                 --use-oracle \
+                 --oracle-mix-ratio 0.5 \
+                 --to-d3rlpy
+```
+
+evaluation: to check data intergrity in data transition 
+
+```bash
+./venv/bin/python ./Final_Project/code/scratch/training_audit_suite.py --input Final_Project/Data/transitions_hardened_v2.parquet
+```
 
 ## 2) Run evaluation with simulated fee
 
