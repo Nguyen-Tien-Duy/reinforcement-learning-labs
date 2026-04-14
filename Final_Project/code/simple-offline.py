@@ -79,12 +79,8 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Enable toy IQL training after validation"
     )
-    parser.add_argument(
-        "--sample-size",
-        type=int,
-        default=200000,
-        help="Number of transitions to sample for toy training (after validation)",
-    )
+    parser.add_argument("--sample-size", type=int, default=1000000,
+        help="Transitions to sample for toy training. Target 20-50x effective epochs: n_steps×batch/sample.")
     parser.add_argument(
         "--n-steps",
         type=int,
@@ -282,13 +278,18 @@ def train_toy_iql(dataframe, args) -> int:
 
     from d3rlpy.models import VectorEncoderFactory
     encoder = VectorEncoderFactory(hidden_units=[256, 256])
-    
+
+    # IQL Hyperparameters — tuned for this dataset:
+    # - expectile=0.9: pushes value fn toward top 10% actions (Oracle trajectories)
+    # - gamma=0.99:    OK because urgency_penalty provides dense reward every step
+    # - batch_size=512: more stable gradient with large, diverse dataset
+    # - Effective epochs ≈ n_steps × batch / sample_size  →  target 20–50x
     config = IQLConfig(
         actor_learning_rate=1e-4,
         critic_learning_rate=3e-4,
-        batch_size=256,
+        batch_size=512,
         gamma=0.99,
-        expectile=0.8,
+        expectile=0.9,
         weight_temp=3.0,
         actor_encoder_factory=encoder,
         critic_encoder_factory=encoder,
@@ -474,7 +475,7 @@ def run_evaluation(dataframe: pd.DataFrame, args: argparse.Namespace) -> int:
             episode_hours=args.episode_hours,
             action_threshold=args.action_threshold,
             deadline_penalty=args.deadline_penalty,
-            queue_penalty=args.queue_penalty,
+            queue_penalty=0.0,
             gas_reference_window=args.gas_reference_window,
             normalize_state= not args.disable_state_normalization,
             urgency_alpha=args.urgency_alpha,
@@ -538,7 +539,7 @@ def run_evaluation(dataframe: pd.DataFrame, args: argparse.Namespace) -> int:
             episode_hours=args.episode_hours,
             action_threshold=args.action_threshold,
             deadline_penalty=args.deadline_penalty,
-            queue_penalty=args.queue_penalty,
+            queue_penalty=0.0,
             gas_reference_window=args.gas_reference_window,
             normalize_state= not args.disable_state_normalization,
             urgency_alpha=args.urgency_alpha,

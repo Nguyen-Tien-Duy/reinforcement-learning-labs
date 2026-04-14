@@ -181,16 +181,16 @@ def apply_oracle_to_episodes(
     Parallelized Mix-Policy Applier using Numba and Multiprocessing.
     """
     df = df.copy()
-    gas_scale = getattr(config, "gas_to_gwei_scale", 1e9)
-    C_base = getattr(config, "C_base", 21000.0)
-    C_mar = getattr(config, "C_mar", 15000.0)
-    beta = getattr(config, "urgency_beta", 0.01)
-    alpha = getattr(config, "urgency_alpha", 3.0)
+    gas_scale = config.gas_to_gwei_scale
+    C_base = config.C_base
+    C_mar = config.C_mar
+    beta = config.urgency_beta
+    alpha = config.urgency_alpha
     ep_hours = float(config.episode_hours)
-    r_scale = getattr(config, "reward_scale", 1e6)
-    d_penalty = getattr(config, "deadline_penalty", 100.0)
-    exec_cap = getattr(config, "execution_capacity", 500.0)
-    base_seed = getattr(config, "seed", 42)
+    r_scale = config.reward_scale
+    d_penalty = config.deadline_penalty
+    exec_cap = config.execution_capacity
+    base_seed = getattr(config, "seed", 42) # Seed can have a default
     
     # Prepare tasks
     print(f"[+] Preparing Oracle tasks for {df['episode_id'].nunique()} episodes...")

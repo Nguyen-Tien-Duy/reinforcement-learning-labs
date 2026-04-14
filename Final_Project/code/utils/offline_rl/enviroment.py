@@ -3,6 +3,7 @@ import pandas as pd
 import gymnasium as gym
 from gymnasium import spaces
 from .config import TransitionBuildConfig
+import json
 
 class CharityGasEnv(gym.Env):
     metadata = {"render_modes": ["human"]}
@@ -32,7 +33,10 @@ class CharityGasEnv(gym.Env):
         self.current_step = 0
         
         row = self.episode_df.iloc[0]
-        state_arr = np.array(row["state"], dtype=np.float32)
+        state_val = row["state"]
+        if isinstance(state_val, str):
+            state_val = json.loads(state_val.replace("'", "\""))
+        state_arr = np.array(state_val, dtype=np.float32)
         
         # Extract initial latent state
         self.queue_size = float(row.get("queue_size", 0.0))
@@ -116,10 +120,16 @@ class CharityGasEnv(gym.Env):
         # Construct next state (compute final physical state)
         if self.current_step < self.max_step:
             next_row = self.episode_df.iloc[self.current_step]
-            next_obs = np.array(next_row["state"], dtype=np.float32).copy()
+            next_state_val = next_row["state"]
+            if isinstance(next_state_val, str):
+                next_state_val = json.loads(next_state_val.replace("'", "\""))
+            next_obs = np.array(next_state_val, dtype=np.float32).copy()
         else:
             row = self.episode_df.iloc[self.current_step - 1]
-            next_obs = np.array(row["state"], dtype=np.float32).copy()
+            state_val = row["state"]
+            if isinstance(state_val, str):
+                state_val = json.loads(state_val.replace("'", "\""))
+            next_obs = np.array(state_val, dtype=np.float32).copy()
 
         # Inject physically consistent queue and time (synced with builder)
         if self.mins is not None and self.maxs is not None:

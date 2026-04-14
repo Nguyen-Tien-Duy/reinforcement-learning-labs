@@ -170,6 +170,10 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Training Audit Suite")
     parser.add_argument("--input", type=Path, default=None)
+    parser.add_argument("--action-col", type=str, default="gas_used",
+        help="action_col used when building the dataset (must match build command). Default: gas_used")
+    parser.add_argument("--no-normalize", action="store_true",
+        help="Set if dataset was built with --disable-state-normalization")
     args = parser.parse_args()
 
     BASE_DIR = PROJECT_ROOT / "code"
@@ -186,9 +190,15 @@ if __name__ == "__main__":
     print(f"Target: {target.name}")
     print("="*60)
     
-    config = TransitionBuildConfig()
-    
-    # 1. Config Lock Check
+    # Reconstruct exactly the same config used during build
+    # IMPORTANT: action_col and normalize_state affect the fingerprint!
+    # These must match the --action-col and --disable-state-normalization flags used in the build command.
+    config = TransitionBuildConfig(
+        action_col=args.action_col,
+        normalize_state=not args.no_normalize,
+    )
+    print(f"[INFO] Auditing with: action_col='{args.action_col}', normalize_state={not args.no_normalize}")
+
     lock_result = check_config_lock(target, config)
     
     # 2. Load Data for further tests
