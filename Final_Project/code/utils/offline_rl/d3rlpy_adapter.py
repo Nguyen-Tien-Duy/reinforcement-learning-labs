@@ -9,6 +9,7 @@ from pandas.api.types import is_bool_dtype
 
 from .types import TransitionValidationError, ValidationMode
 from .validation import validate_transition_dataframe
+from .schema import STATE_COLS, NEXT_STATE_COLS
 
 
 def build_d3rlpy_dataset(df: pd.DataFrame, *, mode: ValidationMode = "strict") -> Any:
@@ -23,7 +24,7 @@ def build_d3rlpy_dataset(df: pd.DataFrame, *, mode: ValidationMode = "strict") -
     from d3rlpy import ActionSpace
     from d3rlpy.dataset import MDPDataset
 
-    observations = _to_state_array(df["state"])
+    observations = df[STATE_COLS].to_numpy(dtype=np.float32)
     rewards = pd.to_numeric(df["reward"], errors="raise").to_numpy(dtype=np.float32)
     
     # 1. Terminals: Episode ends because of a goal or failure (SLA miss)

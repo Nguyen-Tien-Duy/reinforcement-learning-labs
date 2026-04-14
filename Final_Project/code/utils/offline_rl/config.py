@@ -12,7 +12,7 @@ class TransitionBuildConfig:
     history_window: int = 3
     episode_hours: int = 24
     action_threshold: float = 0.0
-    deadline_penalty: float = 2000000.0 # 2.0 points (was 100.0)
+    deadline_penalty: float = 5000000000.0 # 5,000,000,000.0 points (was 2,000,000.0)
     queue_penalty: float = 0.0
     execute_penalty: float = 0.0
     

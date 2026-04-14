@@ -15,16 +15,18 @@ from utils.offline_rl.config import TransitionBuildConfig
 from utils.offline_rl.transition_builder import build_transitions
 from utils.offline_rl.enviroment import CharityGasEnv
 from utils.offline_rl.d3rlpy_adapter import build_d3rlpy_dataset
+from utils.offline_rl.schema import STATE_COLS, NEXT_STATE_COLS
 
-def audit_reward_magnitudes():
+def audit_reward_magnitudes(config: TransitionBuildConfig | None = None):
     """Verify that gas savings and deadline penalties are balanced."""
     print("\n[TRAINING] Audit: Reward Magnitudes")
-    config = TransitionBuildConfig(action_col="gas_used")
+    if config is None:
+        config = TransitionBuildConfig(action_col="gas_used")
     
     # Example: Saving 10 Gwei with 200 tx
     volume = 200
     gas_diff = 10 
-    r_eff_scaled = (volume * 15000 * gas_diff) / config.reward_scale
+    r_eff_scaled = (volume * config.C_mar * gas_diff) / config.reward_scale
     
     # Penalty
     penalty_scaled = config.deadline_penalty / config.reward_scale
@@ -32,14 +34,14 @@ def audit_reward_magnitudes():
     ratio = r_eff_scaled / (penalty_scaled + 1e-12)
     print(f"  Efficiency Gain (+10 Gwei) [200 tx]: {r_eff_scaled:.4f} pts")
     print(f"  Deadline Penalty (Scaled): -{penalty_scaled:.4f} pts")
-    print(f"  Ratio (Saving vs Penalty): {ratio:.2f}x")
+    print(f"  Ratio (Saving vs Penalty): {ratio:.4f}x")
     
-    # Balanced Threshold: 10 Gwei saving (0.21) vs Penalty (2.0)
-    # 30.0 / 2.0 = 15.0x. This is acceptable.
-    if ratio > 100.0:
-        print("  [WARNING] Penalty is too weak compared to gas savings.")
+    # With 5B penalty: 30.0 / 5000.0 = 0.006x — penalty overwhelms savings.
+    # Agent MUST execute before deadline or face catastrophic loss.
+    if ratio > 1.0:
+        print("  [WARNING] Penalty may be too weak — savings can exceed penalty!")
         return False
-    print("  [OK] Reward signals are economically balanced (Penalty > Cost/Saving).")
+    print("  [OK] Penalty dominates savings — agent has strong incentive to meet deadlines.")
     return True
 
 def verify_normalization_parity():
@@ -72,7 +74,7 @@ def verify_normalization_parity():
     env.mins, env.maxs = mins, maxs
     
     obs_env, _ = env.reset()
-    obs_data = np.array(transitions.iloc[0]["state"], dtype=np.float32)
+    obs_data = transitions.iloc[0][STATE_COLS].to_numpy(dtype=np.float32)
     
     try:
         np.testing.assert_allclose(obs_env, obs_data, atol=1e-5)
@@ -148,16 +150,18 @@ def verify_d3rlpy_compatibility():
     """Verify that dataset builds without Terminal/Timeout collisions for d3rlpy v2.x."""
     print("\n[TRAINING] Audit: D3RLPy v2.x Compatibility")
     # Strict validation requires: state, action, reward, next_state, done, episode_id, timestamp
-    df = pd.DataFrame({
-        "state": [[0.0]*11]*5, 
-        "next_state": [[0.0]*11]*5,
+    df_dict = {
         "action": [0.5]*5, 
         "reward": [1.0]*5,
         "done": [1,0,0,0,1], 
         "truncated": [1,0,0,0,1],
         "episode_id": [1]*5,
         "timestamp": pd.date_range("2024-01-01", periods=5, freq="12s")
-    })
+    }
+    for s_col, ns_col in zip(STATE_COLS, NEXT_STATE_COLS):
+        df_dict[s_col]  = [0.0]*5
+        df_dict[ns_col] = [0.0]*5
+    df = pd.DataFrame(df_dict)
     try:
         dataset = build_d3rlpy_dataset(df)
         print(f"  [OK] Dataset built with {len(dataset.episodes)} episodes.")
@@ -190,14 +194,27 @@ if __name__ == "__main__":
     print(f"Target: {target.name}")
     print("="*60)
     
-    # Reconstruct exactly the same config used during build
-    # IMPORTANT: action_col and normalize_state affect the fingerprint!
-    # These must match the --action-col and --disable-state-normalization flags used in the build command.
+    # Reconstruct exactly the same config used during build.
+    # IMPORTANT: EVERY field in TransitionBuildConfig affects the fingerprint hash.
+    # These values MUST match the CLI flags used in the build command
+    # (see SIMULATED_FEE_USAGE.md §1 for the canonical build command).
     config = TransitionBuildConfig(
         action_col=args.action_col,
         normalize_state=not args.no_normalize,
+        # --- Economic parameters (must match --build-from-raw flags) ---
+        deadline_penalty=5000000000.0,
+        urgency_beta=100.0,
+        urgency_alpha=3.0,
+        reward_scale=1000000.0,
+        C_base=21000.0,
+        C_mar=15000.0,
+        gas_to_gwei_scale=1e9,
+        execution_capacity=500.0,
+        episode_hours=24,
+        history_window=3,
     )
     print(f"[INFO] Auditing with: action_col='{args.action_col}', normalize_state={not args.no_normalize}")
+    print(f"[INFO] deadline_penalty={config.deadline_penalty:.0f}, urgency_beta={config.urgency_beta}, reward_scale={config.reward_scale}")
 
     lock_result = check_config_lock(target, config)
     
@@ -206,7 +223,7 @@ if __name__ == "__main__":
         df = pd.read_parquet(target)
         results = [
             lock_result,
-            audit_reward_magnitudes(), 
+            audit_reward_magnitudes(config), 
             verify_normalization_parity(), 
             check_action_diversity(df),
             verify_d3rlpy_compatibility()

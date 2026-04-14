@@ -32,6 +32,11 @@ def build_transitions(
             oracle_ratio=oracle_ratio, 
             suboptimal_ratio=suboptimal_ratio
         )
+        # CRITICAL: Recalculate queue dynamics to match new Oracle actions.
+        # Without this step, queue_size and state vector still reflect the old
+        # proxy action, causing State↔Action mismatch and Policy Collapse.
+        from .build_state_action import recalculate_queue_and_state
+        df = recalculate_queue_and_state(df, config)
         
     # 3. Calculate rewards and episode transitions (done, next_state)
     return build_reward_episode_frame(df, config)

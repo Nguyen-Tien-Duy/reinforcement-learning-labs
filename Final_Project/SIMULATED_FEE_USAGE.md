@@ -32,7 +32,7 @@ TransitionBuildConfig (23 fields: deadline_penalty, urgency_beta, C_base, ...)
 
 | Config | Fingerprint |
 |---|---|
-| `action_col="gas_used"`, `normalize_state=True`, tất cả field khác = default | `fa470cd118151587bba81e8ee3bafa07` |
+| `action_col="gas_used"`, `normalize_state=True`, tất cả field khác = default | `31ae2421401eef6fd827e0ea40d01f51` |
 
 ### Cách kiểm tra fingerprint của một dataset
 
@@ -45,7 +45,7 @@ from dataclasses import asdict
 from utils.offline_rl.config import TransitionBuildConfig
 
 DATASET = "Final_Project/Data/transitions_hardened_oracle_v2.parquet"
-EXPECTED = "fa470cd118151587bba81e8ee3bafa07"
+EXPECTED = "31ae2421401eef6fd827e0ea40d01f51"
 
 # 1. Đọc fingerprint từ file
 pf = pq.read_table(DATASET)
@@ -100,7 +100,7 @@ export PYTHONPATH=/mnt/WindowsD/Reinforcement\ Learning/labs/Final_Project/code
     --use-oracle \
     --oracle-mix-ratio 0.5 \
     --suboptimal-mix-ratio 0.2 \
-    --deadline-penalty 2000000.0 \
+    --deadline-penalty 5000000000.0 \
     --urgency-beta 100.0 \
     --urgency-alpha 3.0 \
     --reward-scale 1000000.0 \
@@ -115,7 +115,7 @@ export PYTHONPATH=/mnt/WindowsD/Reinforcement\ Learning/labs/Final_Project/code
 
 >  **Quan trọng**: Khi build data, **phải khai báo tường minh** tất cả tham số kinh tế.  
 > Dùng CLI default là không an toàn — nếu default thay đổi, data sẽ có fingerprint khác mà không có cảnh báo.  
-> Fingerprint hiện tại của config này: `fa470cd118151587bba81e8ee3bafa07`
+> Fingerprint hiện tại của config này: `31ae2421401eef6fd827e0ea40d01f51`
 
 
 evaluation: to check data intergrity in data transition 
@@ -137,8 +137,8 @@ export PYTHONPATH=/mnt/WindowsD/Reinforcement\ Learning/labs/Final_Project/code 
 nohup ./venv/bin/python ./Final_Project/code/simple-offline.py \
     --input Final_Project/Data/transitions_hardened_oracle.parquet \
     --train-toy \
-    --n-steps 400000 \
-    --sample-size 1000000 \
+    --n-steps 100000 \
+    --sample-size 500000 \
     --save-interval 5000 \
     --seed 42 \
     --skip-validation \
@@ -164,7 +164,7 @@ export PYTHONPATH=/mnt/WindowsD/Reinforcement\ Learning/labs/Final_Project/code 
     --model-path d3rlpy_logs/IQL_HardPenalty_<timestamp>/<model_name>.d3 \
     --eval-ratio 0.2 \
     --limit-eval-episodes 100 \
-    --deadline-penalty 2000000.0 \
+    --deadline-penalty 5000000000.0 \
     --urgency-beta 100.0 \
     --urgency-alpha 3.0 \
     --reward-scale 1000000.0 \
@@ -190,7 +190,7 @@ export PYTHONPATH=/mnt/WindowsD/Reinforcement\ Learning/labs/Final_Project/code 
     --model-path d3rlpy_logs/IQL_HardPenalty_<timestamp>/ \
     --eval-ratio 0.2 \
     --limit-eval-episodes 30 \
-    --deadline-penalty 2000000.0 \
+    --deadline-penalty 5000000000.0 \
     --urgency-beta 100.0 \
     --urgency-alpha 3.0 \
     --reward-scale 1000000.0 \

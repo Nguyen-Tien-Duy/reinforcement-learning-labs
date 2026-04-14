@@ -325,16 +325,10 @@ def simulate_policy(eval_df: pd.DataFrame, algo, config, args: argparse.Namespac
     total_cost_sum = 0.0
     miss_count = 0
     
-    # Optional: limit number of episodes for faster evaluation
     episode_list = list(grouped)
-    if args.limit_eval_episodes and args.limit_eval_episodes > 0:
-        import random
-        random.seed(args.seed)
-        if len(episode_list) > args.limit_eval_episodes:
-            episode_list = random.sample(episode_list, args.limit_eval_episodes)
-            print(f"[+] Sampling {args.limit_eval_episodes} random episodes for fast evaluation...")
-
-    print("\n[+] Simulating policy on evaluation data...")
+    # Sampling is now pre-calculated in run_evaluation to save memory!
+    # All episodes passed here will be evaluated.
+    print(f"\n[+] Simulating policy on {len(episode_list)} episodes of evaluation data...")
 
     # Synchronization: Load normalization params for the Env
     mins, maxs = load_normalization_params(BASE_DIR.parent / "Data")
@@ -415,6 +409,19 @@ def _load_model_iql(model_path: Path, eval_df: pd.DataFrame, mode: str):
             return None
     return algo
 
+def _eval_single_model(m_path, eval_df, sim_config, args):
+    """Worker function for evaluating a single model in parallel."""
+    print(f"[Worker] Evaluating {m_path.name}...", flush=True)
+    algo = _load_model_iql(m_path, eval_df, args.mode)
+    if algo is None: 
+        return None
+    sim_res = simulate_policy(eval_df, algo, sim_config, args)
+    return {
+        "model": m_path.name,
+        "deadline_miss_rate": sim_res["simulated_deadline_miss_rate"],
+        "cost_per_episode": sim_res["simulated_cost_per_episode"],
+    }
+
 def run_evaluation(dataframe: pd.DataFrame, args: argparse.Namespace) -> int:
     if not (0.0 < args.eval_ratio < 1.0):
         print("eval_ratio must be between 0 and 1 (exclusive).")
@@ -433,9 +440,27 @@ def run_evaluation(dataframe: pd.DataFrame, args: argparse.Namespace) -> int:
         return 1
 
     eval_df = _time_holdout_split(dataframe, args.eval_ratio)
+    
+    # IMMEDIATE MEMORY OPTIMIZATION 1: Delete massive full dataframe and Force GC
+    import gc
+    del dataframe
+    gc.collect()
+    
     if eval_df.empty:
         print("Evaluation split is empty. Increase dataset size or reduce eval_ratio.")
         return 1
+
+    # IMMEDIATE MEMORY OPTIMIZATION 2: Pre-sample episodes before IPC pickling!
+    if args.limit_eval_episodes and args.limit_eval_episodes > 0:
+        episode_ids = eval_df["episode_id"].unique()
+        if len(episode_ids) > args.limit_eval_episodes:
+            import random
+            random.seed(args.seed)
+            sampled_eps = random.sample(list(episode_ids), args.limit_eval_episodes)
+            eval_df = eval_df[eval_df["episode_id"].isin(sampled_eps)].copy()
+            # Reclaim RAM from the unsampled rows
+            gc.collect()
+            print(f"[-] Discarded unsampled rows. Memory-optimized eval_df has {len(eval_df)} rows.")
 
     policies: dict[str, np.ndarray] = {}
     logged_action = pd.to_numeric(eval_df["action"], errors="coerce").fillna(0).astype(np.float32).to_numpy()
@@ -487,17 +512,29 @@ def run_evaluation(dataframe: pd.DataFrame, args: argparse.Namespace) -> int:
             execution_capacity=args.execution_capacity if args.execution_capacity is not None else 500.0,
         )
 
-        for m_path in model_files:
-            print(f"\n>>> Evaluating {m_path.name}...")
-            algo = _load_model_iql(m_path, eval_df, args.mode)
-            if algo is None: continue
+        import concurrent.futures
+        import multiprocessing
+
+        max_workers = max(1, multiprocessing.cpu_count() - 4)  # Leave 4 cores for OS
+        print(f"\n[+] Starting parallel evaluation with {max_workers} processes (using SPAWN to save RAM)...", flush=True)
+        
+        # FIX OOM (SIGKILL): Use 'spawn' context instead of 'fork' to prevent memory duplication
+        mp_context = multiprocessing.get_context("spawn")
+        
+        with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers, mp_context=mp_context) as executor:
+            futures = {
+                executor.submit(_eval_single_model, m_path, eval_df, sim_config, args): m_path 
+                for m_path in model_files
+            }
             
-            sim_res = simulate_policy(eval_df, algo, sim_config, args)
-            leaderboard_data.append({
-                "model": m_path.name,
-                "deadline_miss_rate": sim_res["simulated_deadline_miss_rate"],
-                "cost_per_episode": sim_res["simulated_cost_per_episode"],
-            })
+            for future in concurrent.futures.as_completed(futures):
+                m_path = futures[future]
+                try:
+                    res = future.result()
+                    if res is not None:
+                        leaderboard_data.append(res)
+                except Exception as exc:
+                    print(f"Error evaluating {m_path.name}: {exc}")
 
         lb_df = pd.DataFrame(leaderboard_data)
         # Sort: Primary = Miss Rate (lower better), Secondary = Cost (lower better)

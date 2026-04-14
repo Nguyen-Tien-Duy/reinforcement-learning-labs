@@ -11,6 +11,7 @@ from utils.offline_rl.config import TransitionBuildConfig
 from utils.offline_rl.build_state_action import build_state_action_frame
 from utils.offline_rl.build_reward_episode import build_reward_episode_frame
 from utils.offline_rl.enviroment import CharityGasEnv
+from utils.offline_rl.schema import STATE_COLS, NEXT_STATE_COLS
 
 def setup_suite_config(normalize=False):
     return TransitionBuildConfig(
@@ -49,9 +50,9 @@ def run_parity_scenario(raw_df, config, scenario_name):
         action = row["action"]
         
         # Ground Truth
-        s_data = np.array(row["state"], dtype=np.float32)
+        s_data = np.array([row[c] for c in STATE_COLS], dtype=np.float32)
         r_data = row["reward"]
-        s_next_data = np.array(row["next_state"], dtype=np.float32)
+        s_next_data = np.array([row[c] for c in NEXT_STATE_COLS], dtype=np.float32)
         done_data = int(row["done"])
         
         # Simulation
@@ -149,7 +150,7 @@ def verify_real_data_parity(file_path: Path, config: TransitionBuildConfig):
                 row = ep_df.iloc[i]
                 action = [row["action"]]
                 r_data = row["reward"]
-                s_next_data = np.array(row["next_state"], dtype=np.float32)
+                s_next_data = np.array([row[c] for c in NEXT_STATE_COLS], dtype=np.float32)
                 
                 # Step env
                 obs_next, r_env, _, _, info = env.step(action)
@@ -172,6 +173,27 @@ def verify_real_data_parity(file_path: Path, config: TransitionBuildConfig):
         print(f"  [!!!] Real-Data Parity Failed: {e}")
         return False
 
+def test_causal_learning_signal(file_path: Path):
+    """Verify that Oracle logic creates non-zero causal relationships for RL to learn."""
+    print(f"\n[LOGIC] Audit: Causal Learning Signal ({file_path.name})")
+    if not file_path.exists():
+         return True
+    try:
+        df = pd.read_parquet(file_path, columns=["action", "s_queue"])
+        corr = df["action"].corr(df["s_queue"])
+        print(f"  [DEBUG] Corr(Action, s_queue) = {corr:+.4f}")
+        
+        if pd.isna(corr) or abs(corr) < 0.001:
+             print("  [!!!] CAUSAL COLLAPSE: Action and Queue are completely uncorrelated.")
+             print("        The RL agent has no meaningful signal to learn from.")
+             return False
+        
+        print("  [OK] Action is causally linked to Queue size (Signal is valid).")
+        return True
+    except Exception as e:
+        print(f"  [!!!] Causal test failed: {e}")
+        return False
+
 if __name__ == "__main__":
     import argparse
     import json
@@ -192,6 +214,7 @@ if __name__ == "__main__":
     
     if args.input:
         results.append(verify_real_data_parity(args.input, config))
+        results.append(test_causal_learning_signal(args.input))
 
     print("\n" + "="*60)
     print(f"SUMMARY: {sum(results)}/{len(results)} PASSED")

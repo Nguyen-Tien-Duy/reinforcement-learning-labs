@@ -10,6 +10,7 @@ sys.path.append(str(PROJECT_ROOT / "code"))
 
 from utils.offline_rl.config import TransitionBuildConfig
 from utils.offline_rl.enviroment import CharityGasEnv
+from utils.offline_rl.schema import STATE_COLS, NEXT_STATE_COLS
 
 def check_gas_reference_presence():
     """Verify that the Environment handles missing Gas Reference correctly by falling back."""
@@ -47,7 +48,7 @@ def diagnostic_parquet_schema(file_path):
     
     try:
         df = pd.read_parquet(file_path)
-        required = ["state", "action", "reward", "next_state", "done", "episode_id"]
+        required = [*STATE_COLS, "action", "reward", *NEXT_STATE_COLS, "done", "episode_id"]
         missing = [col for col in required if col not in df.columns]
         
         if missing:

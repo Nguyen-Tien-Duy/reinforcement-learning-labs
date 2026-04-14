@@ -112,7 +112,7 @@ def compute_god_view_trajectory(
     alpha: float = 3.0,
     episode_hours: float = 24.0,
     reward_scale: float = 1e6,
-    deadline_penalty: float = 1000.0,
+    deadline_penalty: float = 5000000000.0,
     execution_capacity: float = 500.0
 ) -> Tuple[np.ndarray, np.ndarray, float]:
     """

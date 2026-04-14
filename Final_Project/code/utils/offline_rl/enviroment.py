@@ -49,12 +49,19 @@ class CharityGasEnv(gym.Env):
             return np.zeros(11, dtype=np.float32), 0.0, True, False, {}
 
         a_t = np.clip(action[0], 0.0, 1.0)
+        
+        # Fix Zeno's Paradox for Continuous Neural Networks
+        # NNs asymptotically approach 1.0 but rarely output exactly 1.000.
+        # If the AI predicts > 95% execution, it means "Clear the Queue".
+        if a_t >= 0.95:
+            a_t = 1.0
+            
         row = self.episode_df.iloc[self.current_step]
         
         exec_cap = self.config.execution_capacity
         
-        # Current actual execution
-        executed_volume = min(np.floor(a_t * self.queue_size), exec_cap)
+        # Fix Floating point stability: use np.round to avoid floor(0.9999) -> 0
+        executed_volume = min(np.round(a_t * self.queue_size), exec_cap)
         
         # Calculate remaining queue (pre-arrival of NEXT block) for the urgency penalty
         remaining_q = max(0.0, self.queue_size - executed_volume)
@@ -110,6 +117,7 @@ class CharityGasEnv(gym.Env):
             "executed": executed_volume,
             "q_t": self.queue_size,
             "cost": gas_t * executed_volume,
+            "deadline_miss": bool(terminated and self.queue_size > 0),
             "reward_components": {
                 "efficiency": R_eff,
                 "overhead": R_overhead,

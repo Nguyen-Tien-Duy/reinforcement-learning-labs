@@ -6,16 +6,12 @@ import json
 from pathlib import Path
 
 from .config import TransitionBuildConfig
+from .schema import STATE_COLS, NEXT_STATE_COLS, Q_IDX, T_IDX
 
 REQUIRED_STAGE_COLUMNS = {
-    "timestamp",
-    "episode_id",
-    "step_index",
-    "state",
-    "action",
-    "gas_t",
-    "queue_size",
-    "time_to_deadline",
+    "timestamp", "episode_id", "step_index",
+    "action", "gas_t", "queue_size", "time_to_deadline",
+    *STATE_COLS,
 }
 
 
@@ -108,62 +104,47 @@ def build_reward_episode_frame(
 
     Q_IDX, T_IDX = 8, 9
     
-    # Iterate by Episode to correctly handle shifts and boundaries
-    for episode_id, group in df.groupby("episode_id", sort=False):
-        indices = group.index.tolist()
-        for i_local, idx in enumerate(indices):
-            # TRANSITION RECONSTRUCTION
-            q_t = float(group.loc[idx, "queue_size"])
-            a_t = action_continuous[idx]
-            exec_v = min(np.floor(a_t * q_t), execution_capacity)
-            
-            if i_local < len(indices) - 1:
-                next_row_idx = indices[i_local + 1]
-                # PULL NEXT observation vector directly to get converged gas history
-                s_next = np.array(group.loc[next_row_idx, "state"], dtype=np.float32).copy()
-                
-                # Patch in dynamic physics
-                arrival_next = float(group.loc[next_row_idx, "transaction_count"])
-                t_next = float(group.loc[next_row_idx, "time_to_deadline"])
-                q_next = q_t - exec_v + arrival_next
-            else:
-                # Terminal step: stays on current state but zeroes time and finalizes queue
-                s_next = np.array(group.loc[idx, "state"], dtype=np.float32).copy()
-                q_next = q_t - exec_v
-                t_next = 0.0
-            
-            # Application of injection values (normalized or raw)
-            if mins is not None and maxs is not None:
-                denom = np.where((maxs - mins) == 0, 1.0, (maxs - mins))
-                s_next[Q_IDX] = (q_next - mins[Q_IDX]) / denom[Q_IDX]
-                s_next[T_IDX] = (t_next - mins[T_IDX]) / denom[T_IDX]
-            else:
-                s_next[Q_IDX] = q_next
-                s_next[T_IDX] = t_next
-            
-            updated_next_states[idx] = s_next.tolist()
+    for s_col, ns_col in zip(STATE_COLS, NEXT_STATE_COLS):
+        df[ns_col] = df.groupby("episode_id", dropna=False)[s_col].shift(-1)
+        
+    # Patch Terminal states where shift(-1) is NaN
+    terminal_mask = df[NEXT_STATE_COLS[0]].isna()
+    for s_col, ns_col in zip(STATE_COLS, NEXT_STATE_COLS):
+        df.loc[terminal_mask, ns_col] = df.loc[terminal_mask, s_col]
+        
+    q_next_terminal = pre_execute_queue[terminal_mask] - executed_volume_proxy[terminal_mask]
+    t_next_terminal = 0.0
+    
+    if mins is not None and maxs is not None:
+        denom = np.where((maxs - mins) == 0, 1.0, (maxs - mins))
+        q_next_terminal = (q_next_terminal - mins[Q_IDX]) / denom[Q_IDX]
+        t_next_terminal = (t_next_terminal - mins[T_IDX]) / denom[T_IDX]
+        
+    df.loc[terminal_mask, NEXT_STATE_COLS[Q_IDX]] = q_next_terminal
+    df.loc[terminal_mask, NEXT_STATE_COLS[T_IDX]] = t_next_terminal
 
-    next_state = pd.Series(updated_next_states, index=df.index)
-
-    transitions = pd.DataFrame(
-        {
-            "state": df["state"],
-            "action": action_continuous,
-            "reward": total_reward.astype(np.float32),
-            "next_state": next_state,
-            "done": done,
-            "episode_id": df["episode_id"].astype(np.int64),
-            "timestamp": df["timestamp"],
-            "step_index": df["step_index"].astype(np.int64),
-            "gas_t": pd.to_numeric(df["gas_t"], errors="coerce").fillna(0.0).astype(np.float32),
-            "gas_reference": gas_reference.astype(np.float32),
-            "transaction_count": pd.to_numeric(df["transaction_count"], errors="coerce").fillna(0.0).astype(np.float32),
-            "queue_size": pd.to_numeric(df["queue_size"], errors="coerce").fillna(0.0).astype(np.float32),
-            "time_to_deadline": pd.to_numeric(df["time_to_deadline"], errors="coerce").fillna(0.0).astype(np.float32),
-            "executed_volume_proxy": pd.Series(executed_volume_proxy, dtype=np.float32),
-            "truncated": truncated,
-            "info_json": pd.Series([None] * len(df), dtype="object"),
-            "behavior_log_prob": pd.Series([None] * len(df), dtype="object"),
-        }
-    )
+    df_dict = {
+        "action": action_continuous,
+        "reward": total_reward.astype(np.float32),
+        "done": done,
+        "episode_id": df["episode_id"].astype(np.int64),
+        "timestamp": df["timestamp"],
+        "step_index": df["step_index"].astype(np.int64),
+        "gas_t": pd.to_numeric(df["gas_t"], errors="coerce").fillna(0.0).astype(np.float32),
+        "gas_reference": gas_reference.astype(np.float32),
+        "transaction_count": pd.to_numeric(df["transaction_count"], errors="coerce").fillna(0.0).astype(np.float32),
+        "queue_size": pd.to_numeric(df["queue_size"], errors="coerce").fillna(0.0).astype(np.float32),
+        "time_to_deadline": pd.to_numeric(df["time_to_deadline"], errors="coerce").fillna(0.0).astype(np.float32),
+        "executed_volume_proxy": pd.Series(executed_volume_proxy, dtype=np.float32),
+        "truncated": truncated,
+        "info_json": pd.Series([None] * len(df), dtype="object"),
+        "behavior_log_prob": pd.Series([None] * len(df), dtype="object"),
+    }
+    
+    # Add named state and next_state columns
+    for s_col, ns_col in zip(STATE_COLS, NEXT_STATE_COLS):
+        df_dict[s_col]  = df[s_col]
+        df_dict[ns_col] = df[ns_col]
+        
+    transitions = pd.DataFrame(df_dict)
     return transitions

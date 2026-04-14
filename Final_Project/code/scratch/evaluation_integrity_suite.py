@@ -70,7 +70,8 @@ def test_initial_state_parity(df: pd.DataFrame, config: TransitionBuildConfig,
         env = _make_env(ep_df, config, mins, maxs)
 
         sim_state, _ = env.reset()
-        stored_state = np.array(_parse_state(ep_df.iloc[0]["state"]), dtype=np.float32)
+        from utils.offline_rl.schema import STATE_COLS
+        stored_state = np.array([ep_df.iloc[0][c] for c in STATE_COLS], dtype=np.float32)
 
         diff = np.abs(sim_state - stored_state)
         if np.max(diff) > 1e-4:

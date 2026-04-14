@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from .config import TransitionBuildConfig
+from .schema import STATE_COLS, Q_IDX
 
 
 def build_state_action_frame(raw_df: pd.DataFrame, config: TransitionBuildConfig) -> pd.DataFrame:
@@ -97,19 +98,22 @@ def build_state_action_frame(raw_df: pd.DataFrame, config: TransitionBuildConfig
                 json.dump({"mins": mins.tolist(), "maxs": maxs.tolist()}, f, indent=2)
         except: pass
 
-    state_series = pd.Series([row.astype(np.float32).tolist() for row in state_matrix], index=df.index)
-
-    return pd.DataFrame({
+    df_dict = {
         "timestamp": df[config.timestamp_col],
         "episode_id": episode_id,
         "step_index": df.groupby(episode_id).cumcount(),
-        "state": state_series,
         "action": action.astype(np.float32),
         "gas_t": gas_price.astype(np.float32),
         "transaction_count": tx_count.astype(np.float32),
         "queue_size": queue_size.astype(np.float32),
         "time_to_deadline": time_to_deadline.astype(np.float32),
-    })
+    }
+
+    # Flatten state into named float32 columns (STATE_COLS is the single source of truth)
+    for i, col in enumerate(STATE_COLS):
+        df_dict[col] = pd.Series(state_matrix[:, i].astype(np.float32), index=df.index)
+
+    return pd.DataFrame(df_dict)
 
 
 def _derive_action(df, config):
@@ -160,7 +164,58 @@ def _derive_time_to_deadline(df, episode_id, config):
     return (ep_end - df[config.timestamp_col]).dt.total_seconds() / 3600.0
 
 
+def recalculate_queue_and_state(df: pd.DataFrame, config: TransitionBuildConfig) -> pd.DataFrame:
+    """
+    Recalculate queue_size and patch state vector after Oracle has overwritten the action column.
+    
+    This is CRITICAL for causal consistency: if action changes, the queue dynamics
+    (which depend on action) must be recomputed, and the state vector (which embeds
+    queue_size at index Q_IDX=8) must be patched to match.
+    
+    Must be called AFTER apply_oracle_to_episodes() and BEFORE build_reward_episode_frame().
+    """
+    df = df.copy()
+    episode_id = df["episode_id"]
+    
+    # 1. Recalculate queue with the NEW (Oracle-mixed) actions
+    new_queue = _derive_queue(df, episode_id, df["action"], config)
+    df["queue_size"] = new_queue.astype(np.float32)
+    
+    # 2. Patch state vector at Q_IDX=8
+    Q_IDX = 8
+    
+    # Load normalization params if needed
+    mins, maxs = None, None
+    if getattr(config, "normalize_state", False):
+        try:
+            norm_path = Path(__file__).resolve().parent.parent.parent.parent / "Data" / "state_norm_params.json"
+            if norm_path.exists():
+                with open(norm_path, "r") as f:
+                    params = json.load(f)
+                    mins = np.array(params["mins"], dtype=np.float32)
+                    maxs = np.array(params["maxs"], dtype=np.float32)
+        except:
+            pass
+    
+    queue_values = new_queue.to_numpy(dtype=np.float32)
+        
+    if mins is not None and maxs is not None:
+        denom = maxs[Q_IDX] - mins[Q_IDX]
+        if denom == 0:
+            denom = 1.0
+        queue_values = (queue_values - mins[Q_IDX]) / denom
+    
+    df[STATE_COLS[Q_IDX]] = queue_values  # s_queue
+    
+    print(f"[+] Recalculated queue dynamics for {episode_id.nunique()} episodes.")
+    print(f"    Queue range: [{queue_values.min():.0f}, {queue_values.max():.0f}]")
+    print(f"    Corr(Action, Queue) = {df['action'].corr(df['queue_size']):+.4f}")
+    
+    return df
+
+
 def _validate_state_action_inputs(raw_df, config):
     req = {config.timestamp_col, config.gas_col}
     missing = [c for c in req if c not in raw_df.columns]
     if missing: raise ValueError(f"Missing columns: {missing}")
+
