@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from .types import ColumnRule, TransitionSchema
 
+# ─── Metadata Keys ──────────────────────────────────────────────────────────
+METADATA_CONFIG_FINGERPRINT_KEY = b"config_fingerprint"
+METADATA_REWARD_MEDIAN_KEY = b"reward_median"
+METADATA_REWARD_IQR_KEY = b"reward_iqr"
+
 # ─── Canonical 11-dimensional State Column Names ───────────────────────────
 # These are the SINGLE SOURCE OF TRUTH for all pipeline modules.
 # Index mapping must match the order in build_state_action.py:

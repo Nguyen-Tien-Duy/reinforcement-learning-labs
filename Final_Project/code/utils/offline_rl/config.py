@@ -24,11 +24,16 @@ class TransitionBuildConfig:
     transaction_count_col: str = "transaction_count"
     urgency_alpha: float = 3.0
     urgency_beta: float = 100.0 # 0.0001 per tx (was 0.01)
-    reward_scale: float = 1e6
+    reward_scale: float = 1e9
     reward_scale_g: float = 1.0  # Kept for backward compatibility
 
-    # Continuous Action Economy Setup
+    # Discrete Action Space (V6)
+    n_action_bins: int = 5
+    action_bins: tuple = (0.0, 0.25, 0.5, 0.75, 1.0)  # Execution ratios
+
+    # Action Economy Setup
     C_base: float = 21000.0
     C_mar: float = 15000.0
     gas_to_gwei_scale: float = 1e9  # Divisor to map raw gas (wei) to Gwei unit
     execution_capacity: float = 500.0 # Maximum transactions per block
+    arrival_scale: float = 0.5  # Scale factor for incoming TX (0.5 = 50% of tx_count)

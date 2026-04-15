@@ -132,5 +132,5 @@ def validate_dataset(parquet_path: str):
     print(f"   2. {out_img2} (Báo cáo Luận văn: Nhân quả của State)")
 
 if __name__ == "__main__":
-    DATASET_PATH = "/mnt/WindowsD/Reinforcement Learning/labs/Final_Project/Data/transitions_oracle_fixed_v4_flat.parquet"
+    DATASET_PATH = "/mnt/WindowsD/Reinforcement Learning/labs/Final_Project/Data/transitions_discrete_v9.parquet"
     validate_dataset(DATASET_PATH)

@@ -40,8 +40,8 @@ def build_d3rlpy_dataset(df: pd.DataFrame, *, mode: ValidationMode = "strict") -
     # We prioritize timeouts for episode boundaries to allow bootstrapping.
     terminals = terminals & ~timeouts
 
-    # 3. Actions: Force float32 and (N, 1) shape for continuity
-    actions = pd.to_numeric(df["action"], errors="coerce").to_numpy(dtype=np.float32).reshape(-1, 1)
+    # 3. Actions: Discrete bin IDs (V6)
+    actions = df["action"].to_numpy(dtype=np.int64)
 
     return MDPDataset(
         observations=observations,
@@ -49,7 +49,7 @@ def build_d3rlpy_dataset(df: pd.DataFrame, *, mode: ValidationMode = "strict") -
         rewards=rewards,
         terminals=terminals,
         timeouts=timeouts,
-        action_space=ActionSpace.CONTINUOUS
+        action_space=ActionSpace.DISCRETE
     )
 
 def _parse_array_like(value: Any) -> np.ndarray:

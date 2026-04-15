@@ -1,257 +1,262 @@
-# Simulated Fee Usage Guide
+# Simulated Fee Usage Guide (V20 - Solvable Universe)
 
 ## Purpose
 
-This guide explains how to run fee simulation in evaluation mode and how to interpret the resulting cost metrics.
+This guide explains how to **Build**, **Train**, **Evaluate**, and **Audit** the Offline RL gas fee optimization agent.
+
+> **⚠️ CRITICAL:** All 3 stages (Build, Train, Evaluate) **MUST** use the same physics parameters.
+> Mixing parameters from different versions (e.g., V17 params with V20 data) will produce 100% miss rate.
 
 ---
 
-## 0) Config Fingerprint & Metadata Lockdown
+## Quick Reference: V20 Physics Parameters (Solvable Universe)
 
-### Cơ chế hoạt động
-
-Mỗi dataset Parquet được "đóng dấu" một **fingerprint MD5** tính từ toàn bộ `TransitionBuildConfig`. Mục đích: ngăn train nhầm dataset với config không khớp.
-
-```
-TransitionBuildConfig (23 fields: deadline_penalty, urgency_beta, C_base, ...)
-    │
-    ▼  asdict() + json.dumps(sort_keys=True)  →  chuỗi JSON ổn định
-    │
-    ▼  MD5 hash
-    │
-    ├──► 🔒 Nhúng vào Parquet schema metadata khi BUILD
-    │       key: b"config_fingerprint"
-    │
-    └──► 🔍 Tính lại khi AUDIT → so sánh với stored
-```
-
-> ⚠️ **Mọi field đều ảnh hưởng hash** — kể cả `normalize_state`, `queue_penalty`, `timestamp_col`...  
-> Chỉ cần một field khác là fingerprint hoàn toàn khác.
-
-### Fingerprint hiện tại (chuẩn)
-
-| Config | Fingerprint |
-|---|---|
-| `action_col="gas_used"`, `normalize_state=True`, tất cả field khác = default | `31ae2421401eef6fd827e0ea40d01f51` |
-
-### Cách kiểm tra fingerprint của một dataset
-
-```bash
-export PYTHONPATH=/mnt/WindowsD/Reinforcement\ Learning/labs/Final_Project/code && \
-./venv/bin/python - << 'EOF'
-import pyarrow.parquet as pq
-import json, hashlib
-from dataclasses import asdict
-from utils.offline_rl.config import TransitionBuildConfig
-
-DATASET = "Final_Project/Data/transitions_hardened_oracle_v2.parquet"
-EXPECTED = "31ae2421401eef6fd827e0ea40d01f51"
-
-# 1. Đọc fingerprint từ file
-pf = pq.read_table(DATASET)
-stored = pf.schema.metadata.get(b"config_fingerprint", b"NOT FOUND").decode()
-
-# 2. Tính fingerprint từ config hiện tại
-config = TransitionBuildConfig(action_col="gas_used", normalize_state=True)
-current = hashlib.md5(json.dumps(asdict(config), sort_keys=True).encode()).hexdigest()
-
-print(f"Stored  : {stored}")
-print(f"Current : {current}")
-print(f"Expected: {EXPECTED}")
-print(f"Status  : {'✓ KHỚP' if stored == current == EXPECTED else '✗ LỆCH - DỪNG TRAIN!'}")
-EOF
-```
-
-### Cách dùng audit tool có sẵn
-
-```bash
-export PYTHONPATH=/mnt/WindowsD/Reinforcement\ Learning/labs/Final_Project/code && \
-./venv/bin/python ./Final_Project/code/scratch/training_audit_suite.py \
-    --input Final_Project/Data/transitions_hardened_oracle_v2.parquet
-```
-
-Phải thấy `Config Lock: PASSED` mới được train.
+| Parameter | Value | Rationale |
+|:---|:---|:---|
+| `--execution-capacity` | `500.0` | High throughput to ensure system is never bottlenecked. |
+| `--arrival-scale` | `0.05` | **The Key Fix:** Scale arrivals to ~70% load so the problem is mathematically solvable. |
+| `--urgency-beta` | `50.0` | High linear signal for pending items. |
+| `--urgency-alpha` | `3.0` | Exponential urgency growth near deadline. |
+| `--deadline-penalty` | `1,000,000.0` | Extreme penalty to force Agent to clear queue at all costs. |
+| `--reward-scale` | `1.0` | Use Robust Scaling (Median/IQR) instead of fixed scaling. |
+| `--oracle-mix-ratio` | `0.9` | 90% Oracle actions (learn the right thing). |
+| `--suboptimal-mix-ratio` | `0.05` | 5% inverted actions (learn crisis handling). |
+| `--cql-alpha` | `0.1` | Low conservatism so AI dares to pick Action 3-4. |
 
 ---
 
+## 1) Build Dataset (V20)
 
-## 1) Rebuild transitions with simulation fields
+Build the training dataset with **Spec-aligned Reward**, **Robust Arrival Scaling**, and **High-Precision Oracle**.
 
-Rebuild transitions from raw data so that evaluation has `gas_t`, `queue_size`, and `executed_volume_proxy` columns.
+**Design philosophy:**
+- `arrival_scale=0.05`: Ensures average demand is well below capacity.
+- `deadline_penalty=1,000,000`: Death-sentence for missing a deadline.
+- `PYTHONDONTWRITEBYTECODE=1`: Crucial to avoid stale Numba/Python cache.
 
-Example:
-
-```bash
-python ./Final_Project/code/simple-offline.py \
-  --build-from-raw ./Final_Project/Data/data_2024-04-10_2026-04-10.parquet \
-  --action-col transaction_count \
-  --action-threshold 250 \
-  --output ./Final_Project/Data/transitions_proxy.parquet
-```
-```bash
-# 1. Thiết lập đường dẫn
-export PYTHONPATH=/mnt/WindowsD/Reinforcement\ Learning/labs/Final_Project/code
-
-# 2. Tạo Dataset Hardened (explicit config — mọi tham số kinh tế phải khai rõ)
-./venv/bin/python ./Final_Project/code/simple-offline.py \
+```fish
+env PYTHONDONTWRITEBYTECODE=1 OMP_NUM_THREADS=4 PYTHONPATH="/mnt/WindowsD/Reinforcement Learning/labs/Final_Project/code" \
+nohup ./venv/bin/python ./Final_Project/code/simple-offline.py \
     --build-from-raw Final_Project/Data/data_2024-04-10_2026-04-10.parquet \
-    --output Final_Project/Data/transitions_hardened_oracle_v2.parquet \
+    --output Final_Project/Data/transitions_discrete_v20.parquet \
     --action-col gas_used \
     --use-oracle \
-    --oracle-mix-ratio 0.5 \
-    --suboptimal-mix-ratio 0.2 \
-    --deadline-penalty 5000000000.0 \
-    --urgency-beta 100.0 \
+    --oracle-mix-ratio 0.9 \
+    --suboptimal-mix-ratio 0.05 \
+    --deadline-penalty 1000000.0 \
+    --urgency-beta 50.0 \
     --urgency-alpha 3.0 \
-    --reward-scale 1000000.0 \
-    --C-base 21000.0 \
-    --C-mar 15000.0 \
-    --fee-gas-scale 1e9 \
+    --reward-scale 1.0 \
     --execution-capacity 500.0 \
+    --arrival-scale 0.05 \
     --episode-hours 24 \
     --history-window 3 \
-    --to-d3rlpy
+    --skip-validation \
+    > build_v20.log 2>&1 &
+
+tail -f build_v20.log
 ```
 
->  **Quan trọng**: Khi build data, **phải khai báo tường minh** tất cả tham số kinh tế.  
-> Dùng CLI default là không an toàn — nếu default thay đổi, data sẽ có fingerprint khác mà không có cảnh báo.  
-> Fingerprint hiện tại của config này: `31ae2421401eef6fd827e0ea40d01f51`
+**Expected output:**
+- `Queue range: [0, ~130,000]` — Mean ~654, Median ~204
+- `Action unique values: [0, 1, 2, 3, 4]`
 
+---
 
-evaluation: to check data intergrity in data transition 
+## 2) Audit Dataset (MANDATORY before training)
 
-```bash
-./venv/bin/python ./Final_Project/code/scratch/training_audit_suite.py --input Final_Project/Data/transitions_hardened_v2.parquet
+Run the 3-criteria audit to verify data quality:
+
+```fish
+PYTHONPATH="/mnt/WindowsD/Reinforcement Learning/labs/Final_Project/code" \
+./venv/bin/python ./Final_Project/visualize/check_oracle_miss.py \
+    Final_Project/Data/transitions_discrete_v20.parquet
 ```
 
-## 1a) Training command
+**Must pass:**
+- ✅ **Direction:** `A4 - A0 > 0` (executing is better than waiting)
+- ✅ **Signal Strength:** `|A4-A0| / Range > 1%` (NN can distinguish actions)
+- ⚠️ **Queue Max:** May fail due to spike episodes — acceptable if Mean Queue < 1,000
 
-> **Hyperparameter rationale**
-> - `sample-size 1000000`: dùng 1M/5.2M transitions (20%) để đa dạng data, tránh overfit
-> - `n-steps 400000` × `batch 512` / `1,000,000` ≈ **205 lần/sample** — hơi cao, nhưng IQL với dense reward chịu được
-> - `expectile 0.9`: value function hướng tới top 10% Oracle actions (thay vì 0.8 = top 20%)
-> - `gamma 0.99`: giữ nguyên vì urgency_penalty là dense reward, không cần giảm
+---
 
-```bash
-export PYTHONPATH=/mnt/WindowsD/Reinforcement\ Learning/labs/Final_Project/code && \
+## 3) Visualize State Distribution
+
+Check action-state correlations before training:
+
+```fish
+./venv/bin/python Final_Project/visualize/state_monitor.py \
+    --input Final_Project/Data/transitions_discrete_v20.parquet
+```
+
+**Key metrics to verify:**
+- `s_queue` correlation with action: **must be POSITIVE** (e.g., +0.338)
+- `action=0` distribution: **must be < 50%** (e.g., 32.9%)
+- If `s_queue` correlation is negative → data is broken, DO NOT TRAIN
+
+---
+
+## 4) Train (DiscreteCQL V20)
+
+```fish
+env PYTHONDONTWRITEBYTECODE=1 OMP_NUM_THREADS=4 PYTHONPATH="/mnt/WindowsD/Reinforcement Learning/labs/Final_Project/code" \
 nohup ./venv/bin/python ./Final_Project/code/simple-offline.py \
-    --input Final_Project/Data/transitions_hardened_oracle.parquet \
+    --input Final_Project/Data/transitions_discrete_v20.parquet \
     --train-toy \
     --n-steps 100000 \
-    --sample-size 500000 \
+    --sample-size 5224088 \
     --save-interval 5000 \
-    --seed 42 \
+    --reward-scale 1.0 \
+    --deadline-penalty 1000000.0 \
+    --urgency-beta 50.0 \
+    --arrival-scale 0.05 \
+    --execution-capacity 500.0 \
+    --cql-alpha 0.1 \
     --skip-validation \
-    > train_v1.log 2>&1 &
+    > train_v20.log 2>&1 &
 
-echo "PID: $!"
+tail -f train_v20.log
 ```
 
-> **Lưu ý**: Các tham số kinh tế (`--deadline-penalty`, `--urgency-beta`...) **không cần thiết** khi train trên dataset đã build sẵn — reward đã được mã hóa trong file parquet. Chúng chỉ cần khi `--build-from-raw` (tạo data) hoặc `--evaluate` (simulation).
+> **Hyperparameter rationale:**
+> - `cql-alpha=0.1`: Critical! Default 1.0 is too conservative — AI only picks Action 1 (25%). At 0.1, AI dares to pick Action 3-4 when needed.
+> - `sample-size=5224088`: Use full dataset (no subsampling).
+> - `n-steps=100000`: 20 epochs × 5000 steps/epoch.
 
+**Expected training metrics:**
+- `loss` ≈ 1.5-2.0 (stable, not diverging)
+- `td_loss` ≈ 0.5-0.8
+- `conservative_loss` ≈ 1.0
 
+---
 
-## 2) Run evaluation with simulated fee
+## 5) Evaluate — Single Model
 
-### 2a) Evaluate a single model
-
-```bash
-# Note for Fish shell users: use `set -x PYTHONPATH /mnt/WindowsD/Reinforcement\ Learning/labs/Final_Project/code` instead of export
-export PYTHONPATH=/mnt/WindowsD/Reinforcement\ Learning/labs/Final_Project/code && \
+```fish
+env OMP_NUM_THREADS=3 PYTHONPATH="/mnt/WindowsD/Reinforcement Learning/labs/Final_Project/code" \
 ./venv/bin/python ./Final_Project/code/simple-offline.py \
-    --input Final_Project/Data/transitions_hardened_v2.parquet \
+    --input Final_Project/Data/transitions_discrete_v17.parquet \
     --evaluate \
-    --model-path d3rlpy_logs/IQL_HardPenalty_<timestamp>/<model_name>.d3 \
+    --model-path d3rlpy_logs/DiscreteCQL_V6_<timestamp>/model_100000.d3 \
     --eval-ratio 0.2 \
-    --limit-eval-episodes 100 \
-    --deadline-penalty 5000000000.0 \
-    --urgency-beta 100.0 \
+    --limit-eval-episodes 20 \
+    --deadline-penalty 10000.0 \
+    --urgency-beta 10.0 \
     --urgency-alpha 3.0 \
-    --reward-scale 1000000.0 \
-    --C-base 21000.0 \
-    --C-mar 15000.0 \
-    --fee-gas-scale 1e9 \
-    --execution-capacity 500.0 \
+    --reward-scale 1.0 \
+    --execution-capacity 200.0 \
+    --arrival-scale 0.5 \
     --episode-hours 24 \
     --history-window 3 \
     --action-col gas_used \
     --skip-validation
 ```
 
-### 2b) Evaluate all checkpoints (Leaderboard)
+---
 
-```bash
-# Note for Fish shell users: use `set -x PYTHONPATH /mnt/WindowsD/Reinforcement\ Learning/labs/Final_Project/code` instead of export
-export PYTHONPATH=/mnt/WindowsD/Reinforcement\ Learning/labs/Final_Project/code && \
-./venv/bin/python ./Final_Project/code/simple-offline.py \
-    --input Final_Project/Data/transitions_hardened_v2.parquet \
+## 6) Evaluate — All Checkpoints (Leaderboard)
+
+```fish
+env OMP_NUM_THREADS=3 PYTHONPATH="/mnt/WindowsD/Reinforcement Learning/labs/Final_Project/code" \
+nohup ./venv/bin/python ./Final_Project/code/simple-offline.py \
+    --input Final_Project/Data/transitions_discrete_v17.parquet \
     --evaluate \
     --eval-all \
-    --model-path d3rlpy_logs/IQL_HardPenalty_<timestamp>/ \
+    --model-path d3rlpy_logs/DiscreteCQL_V6_<timestamp>/ \
     --eval-ratio 0.2 \
-    --limit-eval-episodes 30 \
-    --deadline-penalty 5000000000.0 \
-    --urgency-beta 100.0 \
+    --limit-eval-episodes 20 \
+    --deadline-penalty 10000.0 \
+    --urgency-beta 10.0 \
     --urgency-alpha 3.0 \
-    --reward-scale 1000000.0 \
-    --C-base 21000.0 \
-    --C-mar 15000.0 \
-    --fee-gas-scale 1e9 \
+    --reward-scale 1.0 \
+    --execution-capacity 200.0 \
+    --arrival-scale 0.5 \
+    --episode-hours 24 \
+    --history-window 3 \
+    --action-col gas_used \
+    --skip-validation \
+    > evaluate_v17.log 2>&1 &
+
+tail -f evaluate_v17.log
+```
+
+---
+
+## 7) Evaluate — Live Watch (Auto-evaluate new checkpoints)
+
+```fish
+env PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="/mnt/WindowsD/Reinforcement Learning/labs/Final_Project/code" \
+./venv/bin/python ./Final_Project/code/simple-offline.py \
+    --input Final_Project/Data/transitions_discrete_v20.parquet \
+    --evaluate \
+    --eval-watch \
+    --model-path d3rlpy_logs/DiscreteCQL_V20_<timestamp>/ \
+    --eval-ratio 0.2 \
+    --limit-eval-episodes 10 \
+    --deadline-penalty 1000000.0 \
+    --urgency-beta 50.0 \
+    --urgency-alpha 3.0 \
+    --reward-scale 1.0 \
     --execution-capacity 500.0 \
+    --arrival-scale 0.05 \
     --episode-hours 24 \
     --history-window 3 \
     --action-col gas_used \
     --skip-validation
 ```
 
-## 3) New parameters
+> **Note:** `--eval-watch` loops continuously. Use Ctrl+C to stop.
 
-- `--fee-gas-scale`
-  - Converts gas unit before cost aggregation.
-  - Recommended default: `1e9` (Wei to Gwei).
+---
 
-- `--execution-proxy-mode`
-  - `queue`: cost uses queue-based executed volume proxy.
-  - `unit`: cost uses 1 unit per execute action.
+## 8) Reward Design (V17 Spec)
 
-- `--execution-capacity`
-  - Optional cap on executed volume proxy per step.
-  - Useful for stress and sensitivity tests.
+The reward follows `REWARD_DESIGN_SPEC.md` with 3 components:
 
-## 4) Cost equations used in evaluation
+### 8.1) Efficiency
+$$R_{eff} = n_t \times \frac{g_{ref} - g_t}{s_g}, \quad s_g = 10$$
 
-If gas column is available, simulated step cost is:
+- No `C_base` overhead (removed in V12+).
+- Positive when executing at below-average gas price.
 
-$$
-\text{Cost}^{sim}_t = \frac{g_t}{s_g} \cdot E^{proxy}_t
-$$
+### 8.2) Urgency
+$$R_{urg} = \beta \cdot q_t \cdot e^{\alpha(1 - \tau_t / D)}$$
 
-Where:
-- $g_t$: gas value from data (`gas_t` or fallback gas column).
-- $s_g$: `fee-gas-scale`.
-- $E^{proxy}_t$: execution proxy from selected mode.
+- **No Clipping:** In V20, we use pure linear scaling to preserve high-fidelity signals.
+- Range is managed via Robust Normalization (Median/IQR) during training preprocessing.
 
-Episode cost:
+### 8.3) Catastrophe
+$$R_{cat} = -\lambda_d \cdot \mathbf{1}[q_T > 0]$$
 
-$$
-\text{Cost}^{sim}_e = \sum_{t \in e} \text{Cost}^{sim}_t
-$$
+- Applied only at episode end.
 
-Reported metric:
+### Total reward per step:
+$$R_t = R_{eff} - R_{urg} - R_{cat}$$
 
-$$
-\text{TotalCostPerEpisode} = \frac{1}{|\mathcal{E}|}\sum_e \text{Cost}^{sim}_e
-$$
+---
 
-## 5) Interpretation
+## 9) Known Issues & Gotchas
 
-- `total_cost_per_episode`: primary simulated objective metric.
-- `total_cost_sum`: total simulated cost over holdout episodes.
-- `execution_proxy_per_episode`: average simulated executed volume per episode.
+| Issue | Symptom | Fix |
+|:---|:---|:---|
+| Wrong eval params | Miss rate = 100%, cost = 700k+ | Use exact V17 params from this guide |
+| `R_overhead` NameError | Eval crashes | Already fixed in `enviroment.py` |
+| `eval_df["state"]` KeyError | Eval crashes | Already fixed (uses `STATE_COLS`) |
+| CQL alpha too high | AI only picks Action 1 (25%) | Use `--cql-alpha 0.1` |
+| Missing `arrival_scale` in env | Queue explodes during eval | Already fixed in `enviroment.py` |
+| `--eval-watch` loops forever | Process never exits | Use Ctrl+C or `--eval-all` instead |
+| Numba cache stale | Oracle uses old formula | `find . -name "__pycache__" -exec rm -rf {} +` |
 
-## 6) Reporting discipline
+---
 
-When publishing results:
-- Explicitly state this is simulated/proxy cost, not production paid fee.
-- Keep `fee-gas-scale`, proxy mode, and capacity fixed across policy comparisons.
-- Report DeadlineMissRate together with cost (constraint + objective view).
+## 10) Validation Checklist
+
+Before submitting results, verify ALL of these:
+
+- [ ] Audit passes Direction test (A4 > A0)
+- [ ] Audit passes Signal test (> 1% of range)
+- [ ] State monitor shows `s_queue` correlation > +0.1
+- [ ] State monitor shows `action=0` < 50%
+- [ ] Training loss is stable (not diverging)
+- [ ] Evaluation uses **exact same** physics params as build
+- [ ] Miss rate < 1.0 on at least some checkpoints

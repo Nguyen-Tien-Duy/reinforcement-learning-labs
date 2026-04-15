@@ -37,7 +37,9 @@ def build_reward_episode_frame(
         .mean()
     )
 
-    action_continuous = np.clip(df["action"].to_numpy(dtype=np.float32), 0.0, 1.0)
+    action_ids = df["action"].to_numpy(dtype=np.int64)
+    bins = np.array(config.action_bins, dtype=np.float32)
+    action_continuous = bins[action_ids]  # Map bin ID → execution ratio
     pre_execute_queue = df["queue_size"].to_numpy(dtype=np.float32)
     
     # Execution Volume Logic
@@ -45,41 +47,40 @@ def build_reward_episode_frame(
     executed_volume_proxy = np.floor(action_continuous * pre_execute_queue)
     executed_volume_proxy = np.clip(executed_volume_proxy, 0, execution_capacity)
 
-    # 2. Economic Reward (Scaled to Gwei)
+    # 2. Efficiency Component (Spec 2.1)
     gas_scale = getattr(config, "gas_to_gwei_scale", 1e9)
     gas_t_gwei = df["gas_t"].to_numpy(dtype=np.float32) / gas_scale
     gas_ref_gwei = gas_reference.to_numpy(dtype=np.float32) / gas_scale
     
-    C_base = config.C_base
-    C_mar = config.C_mar
+    s_g = 10.0  # From REWARD_DESIGN_SPEC.md
+    R_eff = executed_volume_proxy * ((gas_ref_gwei - gas_t_gwei) / s_g)
 
-    R_eff = executed_volume_proxy * C_mar * (gas_ref_gwei - gas_t_gwei)
-    R_overhead = C_base * gas_t_gwei * (executed_volume_proxy > 0).astype(np.float32)
-    
-    reward_scale = config.reward_scale
-    execution_reward = (R_eff - R_overhead) / reward_scale
-
-    # 3. Urgency Penalty Logic
-    beta = config.urgency_beta
-    alpha = config.urgency_alpha
-    max_time_h = float(config.episode_hours)
+    # 3. Urgency Penalty Component (Spec 2.2)
+    beta = getattr(config, "urgency_beta", 0.01)
+    alpha = getattr(config, "urgency_alpha", 3.0)
+    max_time_h = float(getattr(config, "episode_hours", 24))
     t_deadline_arr = df["time_to_deadline"].to_numpy(dtype=np.float32)
     t_denom = max_time_h * 3600.0 if t_deadline_arr.max() > 24 else max_time_h
     time_ratio = np.clip(t_deadline_arr / max(1e-6, t_denom), 0.0, 1.0)
     
     remaining_q = pre_execute_queue - executed_volume_proxy
-    urgency_penalty = (beta / reward_scale) * remaining_q * np.exp(alpha * (1.0 - time_ratio))
-    
-    total_reward = execution_reward - urgency_penalty
+    # Linear scaling: maintains high correlation (+0.338).
+    # Outliers handled via Robust Normalization (Median/IQR) in trainer.
+    R_urg = beta * remaining_q * np.exp(alpha * (1.0 - time_ratio))
 
-    # 4. Terminal status Check
+    # 4. Catastrophe Component (Spec 2.3)
     is_last_step = (
         df["step_index"]
         == df.groupby("episode_id", dropna=False)["step_index"].transform("max")
     ).to_numpy()
     
     deadline_miss = (is_last_step & (remaining_q > 0))
-    total_reward = total_reward - ((config.deadline_penalty / reward_scale) * deadline_miss.astype(np.float32))
+    lambda_d = getattr(config, "deadline_penalty", 100.0)
+    R_cat = lambda_d * deadline_miss.astype(np.float32)
+    
+    # 5. Final Reward Assembly & Scaling
+    reward_scale = getattr(config, "reward_scale", 100.0)
+    total_reward = (R_eff - R_urg - R_cat) / reward_scale
 
     done = is_last_step.astype(np.int8)
     truncated = is_last_step.astype(np.int8)
@@ -124,7 +125,7 @@ def build_reward_episode_frame(
     df.loc[terminal_mask, NEXT_STATE_COLS[T_IDX]] = t_next_terminal
 
     df_dict = {
-        "action": action_continuous,
+        "action": action_ids,  # Discrete bin ID (int64)
         "reward": total_reward.astype(np.float32),
         "done": done,
         "episode_id": df["episode_id"].astype(np.int64),

@@ -60,14 +60,12 @@ def build_transitions_from_parquet(
     )
         
     if output_path is not None:
-        # Convert to pyarrow table to include custom metadata
-        table = pa.Table.from_pandas(transitions, preserve_index=False)
-        
-        custom_metadata = table.schema.metadata or {}
-        if config_hash:
-            custom_metadata[b"config_fingerprint"] = config_hash.encode("utf-8")
-        
-        table = table.replace_schema_metadata(custom_metadata)
-        pq.write_table(table, Path(output_path))
+        from .io import save_transition_dataframe
+        save_transition_dataframe(
+            transitions, 
+            output_path, 
+            config_fingerprint=config_hash,
+            compute_reward_stats=True
+        )
         
     return transitions

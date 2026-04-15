@@ -10,7 +10,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from d3rlpy.algos import IQLConfig
+from d3rlpy.algos import DiscreteCQLConfig
 from d3rlpy.models.encoders import VectorEncoderFactory
 
 from utils.load_data import (
@@ -141,6 +141,17 @@ def parse_args() -> argparse.Namespace:
         help="Evaluate all model checkpoints in a directory and generate a leaderboard",
     )
     parser.add_argument(
+        "--eval-watch",
+        action="store_true",
+        help="Continuously watch for new model checkpoints and update the leaderboard live",
+    )
+    parser.add_argument(
+        "--cql-alpha",
+        type=float,
+        default=1.0,
+        help="CQL conservatism alpha (default 1.0, lower is less conservative)",
+    )
+    parser.add_argument(
         "--fee-gas-scale",
         type=float,
         default=1e9,
@@ -157,6 +168,12 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=None,
         help="Optional cap for execution proxy per step (applied when action=1)",
+    )
+    parser.add_argument(
+        "--arrival-scale",
+        type=float,
+        default=0.5,
+        help="Scale factor for incoming TX count (0.5 = use 50%% of raw tx_count as arrivals)",
     )
     parser.add_argument(
         "--no-eval-plots",
@@ -277,26 +294,35 @@ def train_toy_iql(dataframe, args) -> int:
         return 1
 
     from d3rlpy.models import VectorEncoderFactory
+    from d3rlpy.preprocessing import MinMaxObservationScaler
     encoder = VectorEncoderFactory(hidden_units=[256, 256])
 
-    # IQL Hyperparameters — tuned for this dataset:
-    # - expectile=0.9: pushes value fn toward top 10% actions (Oracle trajectories)
-    # - gamma=0.99:    OK because urgency_penalty provides dense reward every step
-    # - batch_size=512: more stable gradient with large, diverse dataset
-    # - Effective epochs ≈ n_steps × batch / sample_size  →  target 20–50x
-    config = IQLConfig(
-        actor_learning_rate=1e-4,
-        critic_learning_rate=3e-4,
+    # DiscreteCQL Hyperparameters — tuned for discrete 5-bin action space:
+    # - alpha=1.0: conservative penalty weight to prevent OOD action overestimation
+    # - gamma=0.99: standard discount for dense per-step urgency rewards
+    # - batch_size=512: stable gradient with large, diverse dataset
+    # 4) Configure Reward Scaling (Robust Scaling for V19)
+    # We calculate Median/IQR directly from the training data for maximum reliability.
+    rewards_arr = sampled_df["reward"].to_numpy()
+    median = float(np.median(rewards_arr))
+    q75, q25 = np.percentile(rewards_arr, [75, 25])
+    iqr = float(q75 - q25)
+    if iqr == 0: iqr = 1.0
+    
+    from d3rlpy.preprocessing import StandardRewardScaler
+    print(f"[+] Robust Scaling: Median={median:.4f}, IQR={iqr:.4f}")
+    
+    config = DiscreteCQLConfig(
+        learning_rate=3e-4,
         batch_size=512,
         gamma=0.99,
-        expectile=0.9,
-        weight_temp=3.0,
-        actor_encoder_factory=encoder,
-        critic_encoder_factory=encoder,
-        value_encoder_factory=encoder
+        alpha=args.cql_alpha,
+        encoder_factory=encoder,
+        observation_scaler=MinMaxObservationScaler(),
+        reward_scaler=StandardRewardScaler(mean=median, std=iqr),
     )
-    iql = config.create(device="cpu")
-    iql.build_with_dataset(dataset)
+    cql = config.create(device="cpu")
+    cql.build_with_dataset(dataset)
 
     # 5) Periodic training with checkpoints
     out_dir = BASE_DIR.parent / "output" 
@@ -304,9 +330,9 @@ def train_toy_iql(dataframe, args) -> int:
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"Starting training for {args.n_steps} steps...")
-    run_name = f"IQL_HardPenalty_{datetime.now().strftime('%Y%m%d_%H%M')}"
+    run_name = f"DiscreteCQL_V6_{datetime.now().strftime('%Y%m%d_%H%M')}"
 
-    iql.fit(
+    cql.fit(
         dataset,
         n_steps=args.n_steps,           
         n_steps_per_epoch=args.save_interval, 
@@ -348,8 +374,8 @@ def simulate_policy(eval_df: pd.DataFrame, algo, config, args: argparse.Namespac
         # Start simulation loop
         while True:
             # AI (algo) look at state and decide action
-            # Predict returns a continuous action array
-            action = algo.predict(np.array([state]))[0]
+            # Predict returns a discrete action ID (scalar integer)
+            action = int(algo.predict(np.array([state]))[0])
 
             # Send action to enviroment and get the consequence
             state, reward, terminated, truncated, info = env.step(action)
@@ -391,16 +417,16 @@ def _load_model_iql(model_path: Path, eval_df: pd.DataFrame, mode: str):
             bootstrap_n = min(2048, len(eval_df))
             bootstrap_df = eval_df.head(bootstrap_n).copy()
             bootstrap_dataset = build_d3rlpy_dataset(bootstrap_df, mode=mode)
-            from d3rlpy.algos import IQLConfig
+            from d3rlpy.algos import DiscreteCQLConfig
             from d3rlpy.models import VectorEncoderFactory
-            algo = IQLConfig(
-                actor_learning_rate=1e-4,
-                critic_learning_rate=3e-4,
+            from d3rlpy.preprocessing import MinMaxObservationScaler
+            algo = DiscreteCQLConfig(
+                learning_rate=3e-4,
                 batch_size=256,
                 gamma=0.99,
-                expectile=0.8,
-                weight_temp=3.0,
+                alpha=1.0,
                 encoder_factory=VectorEncoderFactory(hidden_units=[256, 256]),
+                observation_scaler=MinMaxObservationScaler(),
             ).create(device="cpu")
             algo.build_with_dataset(bootstrap_dataset)
             algo.load_model(model_path_str)
@@ -476,22 +502,21 @@ def run_evaluation(dataframe: pd.DataFrame, args: argparse.Namespace) -> int:
         threshold_action = (gas_values <= threshold).astype(np.int64).to_numpy()
         policies[f"threshold_policy(gas<={threshold:.6g})"] = threshold_action
 
-    if args.eval_all and args.model_path is not None:
-        if not args.model_path.is_dir():
-            print(f"--eval-all requested but --model-path {args.model_path} is not a directory.")
+    if args.evaluate and (args.eval_all or args.eval_watch):
+        if args.model_path is None or not args.model_path.is_dir():
+            print("To evaluate all/watch models, --model-path must be a directory containing .d3 files")
             return 1
-        
+            
         import re
+        import time
         def natural_sort_key(s):
             return [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', str(s))]
 
         model_files = sorted(list(args.model_path.glob("*.d3")), key=lambda x: natural_sort_key(x.name))
-        if not model_files:
-            print(f"No .d3 models found in {args.model_path}")
-            return 1
-            
-        print(f"[+] Found {len(model_files)} models for leaderboard evaluation.")
+        
+        print(f"[+] Setting up leaderboard evaluation.")
         leaderboard_data = []
+        evaluated_files = set()
 
         sim_config = TransitionBuildConfig(
             action_col=args.action_col, 
@@ -510,46 +535,65 @@ def run_evaluation(dataframe: pd.DataFrame, args: argparse.Namespace) -> int:
             C_mar=args.C_mar,
             gas_to_gwei_scale=args.fee_gas_scale,
             execution_capacity=args.execution_capacity if args.execution_capacity is not None else 500.0,
+            arrival_scale=args.arrival_scale,
         )
 
         import concurrent.futures
         import multiprocessing
 
-        max_workers = max(1, multiprocessing.cpu_count() - 4)  # Leave 4 cores for OS
-        print(f"\n[+] Starting parallel evaluation with {max_workers} processes (using SPAWN to save RAM)...", flush=True)
-        
-        # FIX OOM (SIGKILL): Use 'spawn' context instead of 'fork' to prevent memory duplication
+        max_workers = max(1, multiprocessing.cpu_count() - 5)  # Leave 1 core for OS
         mp_context = multiprocessing.get_context("spawn")
         
-        with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers, mp_context=mp_context) as executor:
-            futures = {
-                executor.submit(_eval_single_model, m_path, eval_df, sim_config, args): m_path 
-                for m_path in model_files
-            }
+        print(f"\n[+] Starting parallel evaluation with {max_workers} processes (using SPAWN to save RAM)...", flush=True)
+
+        while True:
+            # Refresh model list
+            model_files = sorted(list(args.model_path.glob("*.d3")), key=lambda x: natural_sort_key(x.name))
+            new_files = [m for m in model_files if m not in evaluated_files]
             
-            for future in concurrent.futures.as_completed(futures):
-                m_path = futures[future]
-                try:
-                    res = future.result()
-                    if res is not None:
-                        leaderboard_data.append(res)
-                except Exception as exc:
-                    print(f"Error evaluating {m_path.name}: {exc}")
+            if not new_files:
+                if args.eval_watch:
+                    time.sleep(15)
+                    continue
+                else: # eval-all finished
+                    break
+                    
+            print(f"\n[+] Found {len(new_files)} NEW models. Simulating...")
+            
+            with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers, mp_context=mp_context) as executor:
+                futures = {
+                    executor.submit(_eval_single_model, m_path, eval_df, sim_config, args): m_path 
+                    for m_path in new_files
+                }
+                
+                for future in concurrent.futures.as_completed(futures):
+                    m_path = futures[future]
+                    try:
+                        res = future.result()
+                        if res is not None:
+                            leaderboard_data.append(res)
+                        evaluated_files.add(m_path)
+                    except Exception as exc:
+                        print(f"Error evaluating {m_path.name}: {exc}")
 
-        lb_df = pd.DataFrame(leaderboard_data)
-        # Sort: Primary = Miss Rate (lower better), Secondary = Cost (lower better)
-        lb_df = lb_df.sort_values(["deadline_miss_rate", "cost_per_episode"]).reset_index(drop=True)
-        lb_df["rank"] = lb_df.index + 1
-        
-        print("\n=== MODEL LEADERBOARD ===")
-        print(lb_df.to_string(index=False))
-        
-        run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+            if leaderboard_data:
+                lb_df = pd.DataFrame(leaderboard_data)
+                # Sort: Primary = Miss Rate (lower better), Secondary = Cost (lower better)
+                lb_df = lb_df.sort_values(["deadline_miss_rate", "cost_per_episode"]).reset_index(drop=True)
+                lb_df["rank"] = lb_df.index + 1
+                
+                print(f"\n=== LIVE MODEL LEADERBOARD (Evaluated: {len(leaderboard_data)}) ===")
+                print(lb_df.to_string(index=False))
+                
+                run_id = datetime.now().strftime("%Y%m%d_%H%M")
+                lb_csv = BASE_DIR.parent / "result" / f"leaderboard_{run_id}.csv"
+                lb_csv.parent.mkdir(parents=True, exist_ok=True)
+                lb_df.to_csv(lb_csv, index=False)
+            
+            if not args.eval_watch:
+                print(f"\n[+] Leaderboard saved to {lb_csv}")
+                break
 
-        lb_csv = BASE_DIR.parent / "result" / f"leaderboard{run_id}.csv"
-        lb_csv.parent.mkdir(parents=True, exist_ok=True)
-        lb_df.to_csv(lb_csv, index=False)
-        print(f"\n[+] Leaderboard saved to {lb_csv}")
         return 0
 
     if args.model_path is not None:
@@ -562,7 +606,8 @@ def run_evaluation(dataframe: pd.DataFrame, args: argparse.Namespace) -> int:
             print(f"d3rlpy import failed for evaluation: {exc}")
             return 1
 
-        states = np.asarray(eval_df["state"].tolist(), dtype=np.float32)
+        from utils.offline_rl.schema import STATE_COLS
+        states = eval_df[STATE_COLS].to_numpy(dtype=np.float32)
         algo = _load_model_iql(args.model_path, eval_df, args.mode)
         if algo is None: return 1
 
@@ -586,6 +631,7 @@ def run_evaluation(dataframe: pd.DataFrame, args: argparse.Namespace) -> int:
             C_mar=args.C_mar,
             gas_to_gwei_scale=args.fee_gas_scale,
             execution_capacity=args.execution_capacity if args.execution_capacity is not None else 500.0,
+            arrival_scale=args.arrival_scale,
         )
         # Run simulation with the trained model
         sim_result = simulate_policy(eval_df, algo, sim_config, args)
@@ -945,13 +991,8 @@ def main() -> int:
             return 1
         dataframe = load_transition_dataframe(args.input)
 
-    # Safety Net: Ensure rewards are scaled before training/eval
-    if "reward" in dataframe.columns:
-        mean_r = dataframe["reward"].abs().mean()
-        if mean_r > 1000:
-            r_scale = args.reward_scale
-            print(f"[!] Warning: Data reward seems unscaled (mean={mean_r:.2f}). Applying scale factor {r_scale}...")
-            dataframe["reward"] = dataframe["reward"] / r_scale
+    # V19 Robust Scaling: Normalization is now handled by d3rlpy's reward_scaler
+    # using Median/IQR metadata from the parquet file. Manual scaling removed.
 
     if args.skip_validation:
         print("[!] Skipping data validation as requested. Startup will be faster.")

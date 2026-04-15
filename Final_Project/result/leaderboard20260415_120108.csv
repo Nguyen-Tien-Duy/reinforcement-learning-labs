@@ -1,0 +1,4 @@
+model,deadline_miss_rate,cost_per_episode,rank
+model_10000.d3,1.0,315331.4375,1
+model_30000.d3,1.0,315374.6875,2
+model_20000.d3,1.0,315446.875,3

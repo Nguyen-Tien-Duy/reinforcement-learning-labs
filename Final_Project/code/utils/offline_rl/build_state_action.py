@@ -117,9 +117,14 @@ def build_state_action_frame(raw_df: pd.DataFrame, config: TransitionBuildConfig
 
 
 def _derive_action(df, config):
+    """Quantize raw gas_used/gas_limit ratio into discrete bin IDs."""
     action_source = pd.to_numeric(df[config.action_col], errors="coerce").fillna(0.0)
     gas_limit = pd.to_numeric(df.get(config.gas_limit_col, 30e6), errors="coerce").fillna(30e6).replace(0, 30e6)
-    return (action_source / gas_limit).clip(0, 1)
+    ratio = (action_source / gas_limit).clip(0, 1).to_numpy(dtype=np.float32)
+    bins = np.array(config.action_bins, dtype=np.float32)
+    # Find nearest bin for each ratio value
+    bin_ids = np.argmin(np.abs(ratio[:, None] - bins[None, :]), axis=1)
+    return pd.Series(bin_ids, index=df.index, dtype=np.int64)
 
 
 def _derive_queue(df, episode_id, action, config):
@@ -127,8 +132,11 @@ def _derive_queue(df, episode_id, action, config):
         return pd.to_numeric(df[config.queue_col], errors="coerce").fillna(0.0).clip(lower=0.0)
 
     arrivals = pd.to_numeric(df[config.transaction_count_col], errors="coerce").fillna(0.0).to_numpy()
-    actions = action.to_numpy()
+    arrival_scale = float(getattr(config, "arrival_scale", 0.5))
+    arrivals = arrivals * arrival_scale  # Scale incoming demand to match physical capacity
+    action_ids = action.to_numpy(dtype=np.int64)
     eps = episode_id.to_numpy()
+    bins = np.array(config.action_bins, dtype=np.float32)
     
     queues = np.zeros(len(df), dtype=np.float32)
     exec_cap = float(getattr(config, "execution_capacity", 500.0))
@@ -138,20 +146,15 @@ def _derive_queue(df, episode_id, action, config):
     
     for i in range(len(df)):
         if eps[i] != prev_ep:
-            # Episode Start: Initial queue is the first block's arrivals
             current_q = arrivals[i]
             prev_ep = eps[i]
-        else:
-            # We already advanced current_q at the end of the previous iteration
-            pass
             
         queues[i] = current_q
         
-        # Calculate execution for THIS block (to determine NEXT block's queue)
-        a_t = actions[i]
-        executed = min(np.floor(a_t * current_q), exec_cap)
+        # Map bin ID to execution ratio
+        ratio = bins[action_ids[i]]
+        executed = min(np.floor(ratio * current_q), exec_cap)
         
-        # Advance to NEXT block
         if i < len(df) - 1 and eps[i+1] == eps[i]:
             arrival_next = arrivals[i+1]
             current_q = max(0.0, current_q - executed + arrival_next)
@@ -177,39 +180,18 @@ def recalculate_queue_and_state(df: pd.DataFrame, config: TransitionBuildConfig)
     df = df.copy()
     episode_id = df["episode_id"]
     
-    # 1. Recalculate queue with the NEW (Oracle-mixed) actions
+    # 1. Recalculate queue with the NEW (Oracle-mixed) discrete actions
     new_queue = _derive_queue(df, episode_id, df["action"], config)
     df["queue_size"] = new_queue.astype(np.float32)
     
-    # 2. Patch state vector at Q_IDX=8
+    # 2. Patch state vector at Q_IDX=8 (raw values, no normalization)
     Q_IDX = 8
-    
-    # Load normalization params if needed
-    mins, maxs = None, None
-    if getattr(config, "normalize_state", False):
-        try:
-            norm_path = Path(__file__).resolve().parent.parent.parent.parent / "Data" / "state_norm_params.json"
-            if norm_path.exists():
-                with open(norm_path, "r") as f:
-                    params = json.load(f)
-                    mins = np.array(params["mins"], dtype=np.float32)
-                    maxs = np.array(params["maxs"], dtype=np.float32)
-        except:
-            pass
-    
     queue_values = new_queue.to_numpy(dtype=np.float32)
-        
-    if mins is not None and maxs is not None:
-        denom = maxs[Q_IDX] - mins[Q_IDX]
-        if denom == 0:
-            denom = 1.0
-        queue_values = (queue_values - mins[Q_IDX]) / denom
-    
     df[STATE_COLS[Q_IDX]] = queue_values  # s_queue
     
     print(f"[+] Recalculated queue dynamics for {episode_id.nunique()} episodes.")
     print(f"    Queue range: [{queue_values.min():.0f}, {queue_values.max():.0f}]")
-    print(f"    Corr(Action, Queue) = {df['action'].corr(df['queue_size']):+.4f}")
+    print(f"    Action unique values: {sorted(df['action'].unique())}")
     
     return df
 
