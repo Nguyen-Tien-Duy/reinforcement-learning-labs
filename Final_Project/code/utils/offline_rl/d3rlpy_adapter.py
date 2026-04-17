@@ -88,13 +88,14 @@ def _to_state_array(series: pd.Series) -> np.ndarray:
 
 
 def _to_bool_array(series: pd.Series) -> np.ndarray:
-    """Helper to convert various types to boolean numpy array."""
+    """Helper to convert various types to boolean numpy array. Strictly refuses NaNs."""
     if is_bool_dtype(series):
         return series.to_numpy(dtype=bool)
 
-    numeric = pd.to_numeric(series, errors="coerce")
+    # Force raise on any conversion error
+    numeric = pd.to_numeric(series, errors="raise")
+    
     if numeric.isna().any():
-        # Fallback for non-numeric boolean strings/objects
-        return series.astype(str).str.lower().isin(["1", "true", "1.0"]).to_numpy(dtype=bool)
+        raise ValueError(f"Strict Data Policy Violation: Boolean column contains NaNs. Policy requires 100% clean data.")
     
     return numeric.astype(np.int64).isin([1]).to_numpy(dtype=bool)

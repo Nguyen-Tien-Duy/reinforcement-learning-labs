@@ -8,7 +8,7 @@ import json
 class CharityGasEnv(gym.Env):
     metadata = {"render_modes": ["human"]}
 
-    def __init__(self, episode_df: pd.DataFrame, config: TransitionBuildConfig):
+    def __init__(self, episode_df: pd.DataFrame, config: TransitionBuildConfig, mins=None, maxs=None):
         super().__init__()
         self.config = config
         
@@ -36,7 +36,8 @@ class CharityGasEnv(gym.Env):
             return np.full(self.max_step, default_val, dtype=np.float32)
 
         arr_scale = float(getattr(config, "arrival_scale", 0.5))
-        self.arrival_arr = _get_arr("transaction_count") * arr_scale
+        # DISCRETE PHYSICS: Arrivals must be integers
+        self.arrival_arr = np.round(_get_arr("transaction_count") * arr_scale).astype(np.int64)
         self.t_deadline_arr = _get_arr("time_to_deadline")
         
         # Pre-scale gas values for efficiency
@@ -48,12 +49,27 @@ class CharityGasEnv(gym.Env):
         self.states_matrix = episode_df[self._STATE_COLS].to_numpy(dtype=np.float32)
         
         self.current_step = 0
-        self.queue_size = 0.0
+        
+        # 4. Raw initialization values for physics (must be discrete)
+        self.raw_q_initial = int(np.round(float(episode_df["queue_size"].iloc[0]))) if "queue_size" in episode_df.columns else 0
+        self.raw_t_initial = float(episode_df["time_to_deadline"].iloc[0]) if "time_to_deadline" in episode_df.columns else 0.0
+        
+        self.queue_size = 0
         self.time_to_deadline = 0.0
         
-        # Normalization
-        self.mins = None
-        self.maxs = None
+        # Normalization: Strict Policy Enforced
+        self.normalize_state = config.normalize_state
+        if self.normalize_state:
+            if mins is None or maxs is None:
+                raise ValueError(
+                    "CharityGasEnv: normalize_state=True requires mins/maxs to be provided at init. "
+                    "Fail-fast policy: AI cannot perceive the environment without valid scaling parameters."
+                )
+            self.mins = np.array(mins, dtype=np.float32)
+            self.maxs = np.array(maxs, dtype=np.float32)
+        else:
+            self.mins = None
+            self.maxs = None
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -62,9 +78,15 @@ class CharityGasEnv(gym.Env):
         # Initialize latent state from buffered matrix at index 0
         state_arr = self.states_matrix[0].copy()
         
-        # Sync latent variables with initial observation
-        self.queue_size = float(state_arr[self._Q_IDX])
-        self.time_to_deadline = float(state_arr[self._T_IDX])
+        # Sync latent variables with RAW initial values for physics simulation
+        self.queue_size = self.raw_q_initial
+        self.time_to_deadline = self.raw_t_initial
+        
+        # Injection: Normalized Queue and Time for initial observation
+        if self.normalize_state:
+            denom = np.where((self.maxs - self.mins) == 0, 1.0, (self.maxs - self.mins))
+            state_arr[self._Q_IDX] = (self.queue_size - self.mins[self._Q_IDX]) / denom[self._Q_IDX]
+            state_arr[self._T_IDX] = (self.time_to_deadline - self.mins[self._T_IDX]) / denom[self._T_IDX]
         
         return state_arr, {}
 
@@ -79,9 +101,9 @@ class CharityGasEnv(gym.Env):
             
         exec_cap = self.config.execution_capacity
         
-        # 2. Execution Volume Logic
-        executed_volume = min(np.round(ratio * self.queue_size), exec_cap)
-        remaining_q = max(0.0, self.queue_size - executed_volume)
+        # 2. Execution Volume Logic (Must be Integer)
+        executed_volume = int(min(np.floor(ratio * self.queue_size), exec_cap))
+        remaining_q = max(0, self.queue_size - executed_volume)
         
         # 3. Advance steps & Compute Physically Consistent Queue (Buffered)
         curr_idx = self.current_step
@@ -99,12 +121,10 @@ class CharityGasEnv(gym.Env):
         gas_t = self.gas_t_gwei[curr_idx]
         gas_ref = self.gas_ref_gwei[curr_idx]
         
-        C_base = self.config.C_base
-        C_mar = self.config.C_mar
         reward_scale = self.config.reward_scale
 
         # Efficiency (Spec-aligned: R_eff = n * (gas_ref - gas_t) / s_g)
-        s_g = 10.0
+        s_g = self.config.gas_scaling_factor
         R_eff = executed_volume * (gas_ref - gas_t) / s_g
         
         # Urgency (Spec 2.2 with Clipping)
@@ -113,7 +133,7 @@ class CharityGasEnv(gym.Env):
         max_time_h = float(self.config.episode_hours)
         
         t_curr = self.t_deadline_arr[curr_idx]
-        time_ratio = np.clip(t_curr / max(1e-6, t_denom), 0.0, 1.0)
+        time_ratio = np.clip(t_curr / max(1e-6, max_time_h), 0.0, 1.0)
         
         # Urgency (Linear scale synced with V19 Build/Oracle)
         urgency_penalty = beta * remaining_q * np.exp(alpha * (1.0 - time_ratio))
@@ -127,10 +147,16 @@ class CharityGasEnv(gym.Env):
         terminated = bool(out_of_data)
         truncated = bool(out_of_data)
         
-        # SLA Violation (at episode end)
+        # Triple-Sync V27: Linear penalty — proportional to remaining queue.
+        R_cat = 0.0
         if terminated and self.queue_size > 0:
-            penalty = self.config.deadline_penalty
-            total_reward -= penalty
+            R_cat = self.config.deadline_penalty * self.queue_size
+            
+        # Final Assembly with Strict Scaling (V22)
+        reward_scale = self.config.reward_scale
+        total_reward = (R_eff - urgency_penalty - R_cat) / reward_scale
+        
+        self.current_step += 1
 
         info = {
             "executed": executed_volume,
@@ -139,17 +165,17 @@ class CharityGasEnv(gym.Env):
             "deadline_miss": bool(terminated and self.queue_size > 0),
             "reward_components": {
                 "efficiency": R_eff,
-                "overhead": 0.0,  # C_base removed in Spec V17
                 "urgency": urgency_penalty
             }
         }
         
         # 6. Next Observation construction (Buffered)
+        # 6. Next Observation construction
         if self.current_step < self.max_step:
             next_obs = self.states_matrix[self.current_step].copy()
         else:
-            # For terminal state, we use the last known observation
-            next_obs = self.states_matrix[self.current_step - 1].copy()
+            # Standard RL practice: return zeros for the observation at terminal state
+            next_obs = np.zeros_like(self.states_matrix[0])
 
         # Inject physically consistent queue and time (synced with builder)
         if self.mins is not None and self.maxs is not None:
@@ -157,7 +183,9 @@ class CharityGasEnv(gym.Env):
             next_obs[self._Q_IDX] = (self.queue_size - self.mins[self._Q_IDX]) / denom[self._Q_IDX]
             next_obs[self._T_IDX] = (self.time_to_deadline - self.mins[self._T_IDX]) / denom[self._T_IDX]
         else:
-            next_obs[self._Q_IDX] = self.queue_size
-            next_obs[self._T_IDX] = self.time_to_deadline
+            raise ValueError(
+                "CRITICAL: Normalization parameters (mins/maxs) are NOT set! "
+                "AI cannot perceive raw physical values. Check your evaluation loader."
+            )
 
         return next_obs, total_reward, terminated, truncated, info

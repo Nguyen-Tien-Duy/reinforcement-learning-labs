@@ -15,8 +15,9 @@ def build_transitions(
     raw_df: pd.DataFrame, 
     config: TransitionBuildConfig,
     use_oracle: bool = False,
-    oracle_ratio: float = 0.5,
-    suboptimal_ratio: float = 0.2
+    expert_ratio: float = 0.4,
+    medium_ratio: float = 0.3,
+    random_ratio: float = 0.3
 ) -> pd.DataFrame:
     # 1. Build initial state-action frame
     df = build_state_action_frame(raw_df, config)
@@ -24,13 +25,14 @@ def build_transitions(
     # 2. Apply Hindsight Oracle if requested
     # We do this BEFORE reward calculation so rewards and next_states reflect oracle decisions
     if use_oracle:
-        print(f"[+] Applying Hindsight Oracle (Oracle={oracle_ratio}, Suboptimal={suboptimal_ratio})...")
+        print(f"[+] Applying V28 Episode-Level Oracle (Expert={expert_ratio}, Medium={medium_ratio}, Random={random_ratio})...")
         from .oracle_builder import apply_oracle_to_episodes
         df = apply_oracle_to_episodes(
             df, 
             config, 
-            oracle_ratio=oracle_ratio, 
-            suboptimal_ratio=suboptimal_ratio
+            expert_ratio=expert_ratio, 
+            medium_ratio=medium_ratio,
+            random_ratio=random_ratio
         )
         # CRITICAL: Recalculate queue dynamics to match new Oracle actions.
         # Without this step, queue_size and state vector still reflect the old
@@ -46,8 +48,9 @@ def build_transitions_from_parquet(
     config: TransitionBuildConfig,
     output_path: str | Path | None = None,
     use_oracle: bool = False,
-    oracle_ratio: float = 0.5,
-    suboptimal_ratio: float = 0.2,
+    expert_ratio: float = 0.4,
+    medium_ratio: float = 0.3,
+    random_ratio: float = 0.3,
     config_hash: str | None = None,
 ) -> pd.DataFrame:
     raw_df = pd.read_parquet(Path(raw_parquet_path))
@@ -55,8 +58,9 @@ def build_transitions_from_parquet(
         raw_df, 
         config,
         use_oracle=use_oracle,
-        oracle_ratio=oracle_ratio,
-        suboptimal_ratio=suboptimal_ratio
+        expert_ratio=expert_ratio,
+        medium_ratio=medium_ratio,
+        random_ratio=random_ratio
     )
         
     if output_path is not None:

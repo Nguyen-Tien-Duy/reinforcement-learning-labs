@@ -24,17 +24,17 @@ action = gas_used / gas_limit   # ← Tỷ lệ gas tiêu thụ của block
 - **Time to Deadline:** Action trung bình = 0.38 bất kể còn 24h hay còn 1h
 
 **Minh chứng toán học:**
-| Cặp biến | Pearson Correlation | Ý nghĩa |
-|----------|:-------------------:|---------|
-| Action ↔ Queue Size | +0.0067 | Không tồn tại quan hệ tuyến tính |
-| Action ↔ Time Left | −0.0002 | Agent "mù thời gian" |
-| Action ↔ Gas Price | +0.8900 | Chỉ phản ánh network load, KHÔNG phải chiến thuật |
+| Cặp biến            | Pearson Correlation | Ý nghĩa                                           |
+| ------------------- | :-----------------: | ------------------------------------------------- |
+| Action ↔ Queue Size |       +0.0067       | Không tồn tại quan hệ tuyến tính                  |
+| Action ↔ Time Left  |       −0.0002       | Agent "mù thời gian"                              |
+| Action ↔ Gas Price  |       +0.8900       | Chỉ phản ánh network load, KHÔNG phải chiến thuật |
 
 **Hậu quả cho IQL:** Thuật toán cố gắng tìm hàm $Q(s,a)$ nhưng không có pattern nào trong data thể hiện rằng "khi queue cao → nên xả nhiều" hay "khi sắp hết giờ → nên xả gấp". IQL nhận tín hiệu ngẫu nhiên thuần túy, và sụp đổ về action hằng số.
 
 ---
 
-### Lỗi #2: Deadline Penalty Quá Yếu — Bị Nuốt Chửng Bởi Chi Phí Gas
+### Lỗi #2: Deadline Penalty Quá Yếu — B bị Nuốt Chửng Bởi Chi Phí Gas
 
 > [!WARNING]
 > Kinh tế học phần thưởng bị lệch khiến Agent thà "ngồi im chịu phạt" còn hơn trả phí Gas.
@@ -127,38 +127,52 @@ Chèn bước `recalculate_queue_and_state()` SAU Oracle, TRƯỚC Reward:
 
 **Giải pháp:** Tách thành 11 cột Float32 có tên ngữ nghĩa:
 
-| Cột | Ý nghĩa | Vai trò |
-|-----|---------|---------|
-| `s_gas_t0` | Gas price hiện tại | Market signal |
-| `s_gas_t1` | Gas price t-1 | History |
-| `s_gas_t2` | Gas price t-2 | History |
-| `s_congestion` | Block congestion $(g_{used} - g_{target}) / g_{target}$ | Network load |
-| `s_momentum` | Log-return gas $\Delta \ln(g_t)$ | Trend |
-| `s_accel` | Gia tốc gas $\Delta^2 \ln(g_t)$ | Trend change |
-| `s_surprise` | Z-score tx count | Mempool anomaly |
-| `s_backlog` | EWMA backlog pressure | Cumulative stress |
-| `s_queue` | Pending transactions | **Agent's debt** |
-| `s_time_left` | Hours to deadline | **Urgency signal** |
-| `s_gas_ref` | Rolling mean gas (128 blocks) | Reference price |
+| Cột            | Ý nghĩa                                                 | Vai trò            |
+| -------------- | ------------------------------------------------------- | ------------------ |
+| `s_gas_t0`     | Gas price hiện tại                                      | Market signal      |
+| `s_gas_t1`     | Gas price t-1                                           | History            |
+| `s_gas_t2`     | Gas price t-2                                           | History            |
+| `s_congestion` | Block congestion $(g_{used} - g_{target}) / g_{target}$ | Network load       |
+| `s_momentum`   | Log-return gas $\Delta \ln(g_t)$                        | Trend              |
+| `s_accel`      | Gia tốc gas $\Delta^2 \ln(g_t)$                         | Trend change       |
+| `s_surprise`   | Z-score tx count                                        | Mempool anomaly    |
+| `s_backlog`    | EWMA backlog pressure                                   | Cumulative stress  |
+| `s_queue`      | Pending transactions                                    | **Agent's debt**   |
+| `s_time_left`  | Hours to deadline                                       | **Urgency signal** |
+| `s_gas_ref`    | Rolling mean gas (128 blocks)                           | Reference price    |
 
 **Kết quả:** RAM giảm 1.7GB → 200MB. Thời gian lưu Parquet: phút → giây.
 
 ---
 
-## Trạng Thái Hiện Tại
+## 🚀 Cập nhật Phiên bản V25/V26 (Bản Master)
+*Ngày ghi nhận: 17/04/2026*
 
-| Hạng mục | Trạng thái |
-|----------|-----------|
-| Pipeline V4 (named columns) | 🔄 Đang build (`build_v4_named.log`) |
-| Oracle DP solver | ✅ Đã fix boundary condition |
-| Deadline Penalty 5B | ✅ Đã áp dụng |
-| Causal recalculation | ✅ `recalculate_queue_and_state()` đã chèn |
-| State schema flattening | ✅ 11 cột ngữ nghĩa `s_*` / `ns_*` |
-| Validation suite | ✅ 6 file test đã cập nhật schema mới |
+### Bài học #5: Sức mạnh của sự kiên nhẫn (Scale 0.1 / Beta 0.001)
+Trong quá trình test độ nhạy, chúng ta tìm thấy cấu hình "Smart++" tạo ra sự đa dạng hành động lớn nhất:
+- Dù áp lực hàng đợi thấp (`Scale=0.1`), nhưng mức phạt chờ siêu nhỏ (`Beta=0.001`) giúp Oracle dám ngồi đợi giá gas đáy thay vì xả ngay lập tức.
+- Kết quả: Đạt **28% Chờ (Action 0)**, giúp Agent học được cả kỹ năng "quan sát vùng đáy".
 
-## Bước Tiếp Theo
+### Bài học #6: Lỗi "Điểm mù Deadline" (The Triple-Sync Principle)
+Chúng ta phát hiện Oracle để sót hàng (Miss Rate 1.23%) do sự lệch pha logic:
+- **Nguyên nhân**: Oracle dùng Linear Penalty (`500 * queue`), nhưng Training & Env dùng Flat Penalty (`500`). 
+- **Giải pháp (V26)**: Đồng bộ hóa 100% logic phạt Deadline và chi phí chờ cho Oracle khớp với môi trường huấn luyện. 
 
-1. **Chờ build V4 hoàn tất** → Chạy `validate_v3_data.py` + `logic_integrity_suite.py`
-2. **Kiểm tra Causal Signal:** Corr(Action, s_queue) phải > 0.001
-3. **Train IQL** trên dataset V4 với tham số từ `SIMULATED_FEE_USAGE.md`
-4. **Đánh giá:** WIS, Doubly Robust, CVaR theo evaluation suite
+---
+*Ghi chú: Luôn Audit lại Action Distribution và Solvability Rate (Miss Rate) sau mỗi bản build để đảm bảo Agent không học từ một "ông thầy" sai lầm.*
+
+### Bài học #7 (V27 Lịch sử): Trò lừa kinh tế của Flat Penalty & Sự lên ngôi của Linear Penalty
+- **Hiện tượng**: Ngay cả khi sức xả (capacity) dư sức đáp ứng, Oracle ở V26 vẫn quyết định "ôm" 18,000 txs và chịu trễ hạn.
+- **Nguyên lý Toán Kinh Tế**: Vì V26 dùng Flat Penalty (-500 điểm cố định), Oracle tính toán thấy việc *trả phí Gas đắt đỏ* để xả 18,000 txs tốn kém gấp hàng ngàn lần so với việc *đóng 500 điểm bồi thường hợp đồng*. Quyết định "bỏ cuộc" của nó không phải vì yếu, mà vì quá khôn (chọn con đường phạt rẻ nhất)!
+- **Giải pháp**: Ở bản V27, chuyển sang **Linear Penalty** ($500 \times Queue$). Phạt tỉ lệ thuận với lượng dư, dồn Agent vào bước đường cùng: "Nợ bao nhiêu đền bấy nhiêu". Kết quả: Oracle ngoan ngoãn xả sạch 100% không dám bùng kèo.
+
+### Bài học #8: Vá lỗi nảy số (Quantization Error) tại Biên Số 0
+- Khi giải bài toán DP trên không gian liên tục được chia lưới (Discretized Bins), hàng đợi nhỏ hơn `0.5 * Q_step` sẽ bị làm tròn thành bến 0 ($q\_idx = 0$). Oracle tưởng nhầm là bồn rỗng nên chọn Action 0 (không làm gì), dẫn tới bị lọt kẽ vài đơn hàng.
+- **Cách vá**: Gài logic `if current_Q > 0.0 and q_idx == 0: q_idx = 1`. Ép những lượng dư siêu nhỏ vào Bin 1 thay vì Bin 0 để Oracle nhận diện được rác thải và bơm xả hoàn toàn. Từ đó chốt hạ Miss Rate 0.00%.
+
+### Bài học #9: Phân phối lệnh tối ưu là "Bang-Bang Control"
+- Nỗi sợ ban đầu: Tại sao Oracle toàn chọn lệnh 0 (15%) và lệnh 4 (35%) mà không phân bổ đều? 
+- Bệ phóng lý thuyết: Vì chi phí phạt tuyến tính đụng độ với sức xả vật lý, lý thuyết Điều khiển Tối ưu chỉ định **Bang-Bang Control** là nghiệm đỉnh cao:
+  - Giá Gas cực đắt (Đu Đỉnh) $\rightarrow$ Ép công suất Action 0 (Đóng băng).
+  - Giá Gas chạm đáy (Local Min) $\rightarrow$ Nhấp nhả lút ga Action 4 (All-in xả kho).
+  Đây không phải là tự hủy, mà là nghệ thuật chớp thời cơ và cắt lỗ của một Siêu Trí tuệ tài chính.

@@ -42,21 +42,29 @@ def build_state_action_frame(raw_df: pd.DataFrame, config: TransitionBuildConfig
         lag_col = grouped_gas.shift(lag).fillna(first_gas_price).groupby(episode_id, dropna=False).ffill()
         gas_history_cols.append(pd.to_numeric(lag_col, errors="coerce").fillna(0.0))
 
-    # Features
-    gas_used = pd.to_numeric(df[config.gas_used_col], errors="coerce").fillna(0.0)
-    gas_limit = pd.to_numeric(df[config.gas_limit_col], errors="coerce").fillna(30e6).replace(0, 30e6)
+    # Features: No more silent fillers. Data MUST be clean.
+    gas_used = pd.to_numeric(df[config.gas_used_col], errors="coerce")
+    _ensure_no_nan(gas_used, config.gas_used_col)
+    
+    gas_limit = pd.to_numeric(df[config.gas_limit_col], errors="coerce").replace(0, np.nan)
+    _ensure_no_nan(gas_limit, config.gas_limit_col)
     target_gas = gas_limit / 2.0
     p_t = ((gas_used - target_gas) / target_gas).fillna(0.0)
 
-    gas_price = pd.to_numeric(df[config.gas_col], errors="coerce").fillna(1.0).clip(lower=1.0)
+    gas_price = pd.to_numeric(df[config.gas_col], errors="coerce").clip(lower=1.0)
+    _ensure_no_nan(gas_price, config.gas_col)
+    
     log_gas = np.log(gas_price)
-    m_t = log_gas.groupby(episode_id, dropna=False).diff().fillna(0.0)
+    m_t = log_gas.groupby(episode_id, dropna=False).diff().fillna(0.0) # diff fillna is math-required for first step
     a_t = m_t.groupby(episode_id, dropna=False).diff().fillna(0.0)
 
-    tx_count = pd.to_numeric(df[config.transaction_count_col], errors="coerce").fillna(0.0)
+    tx_count = pd.to_numeric(df[config.transaction_count_col], errors="coerce")
+    _ensure_no_nan(tx_count, config.transaction_count_col)
+    
     tx_ma = tx_count.groupby(episode_id, dropna=False).transform(lambda x: x.rolling(window=128, min_periods=1).mean())
     tx_std = tx_count.groupby(episode_id, dropna=False).transform(lambda x: x.rolling(window=128, min_periods=1).std().fillna(1.0).replace(0, 1))
-    u_t = ((tx_count - tx_ma) / tx_std).fillna(0.0)
+    u_t = ((tx_count - tx_ma) / tx_std)
+    _ensure_no_nan(u_t, "calculated u_t (Surprise)")
 
     rho, alpha_b, beta_b = 0.95, 0.3, 0.2
     b_values = np.zeros(len(df), dtype=np.float64)
@@ -72,7 +80,7 @@ def build_state_action_frame(raw_df: pd.DataFrame, config: TransitionBuildConfig
 
     gas_ref = gas_price.groupby(episode_id, dropna=False).transform(lambda x: x.rolling(window=128, min_periods=1).mean())
 
-    state_matrix = np.column_stack([
+    state_matrix = np.stack([
         *(series.to_numpy(dtype=np.float32) for series in gas_history_cols),
         p_t.to_numpy(dtype=np.float32),
         m_t.to_numpy(dtype=np.float32),
@@ -82,27 +90,14 @@ def build_state_action_frame(raw_df: pd.DataFrame, config: TransitionBuildConfig
         queue_size.to_numpy(dtype=np.float32),
         time_to_deadline.to_numpy(dtype=np.float32),
         gas_ref.to_numpy(dtype=np.float32),
-    ])
+    ], axis=1)
 
-    if config.normalize_state:
-        mins = state_matrix.min(axis=0)
-        maxs = state_matrix.max(axis=0)
-        denom = np.where((maxs - mins) == 0, 1.0, (maxs - mins))
-        state_matrix = (state_matrix - mins) / denom
-        
-        # Save params
-        try:
-            save_path = Path(__file__).resolve().parent.parent.parent.parent / "Data" / "state_norm_params.json"
-            save_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(save_path, "w") as f:
-                json.dump({"mins": mins.tolist(), "maxs": maxs.tolist()}, f, indent=2)
-        except: pass
 
     df_dict = {
         "timestamp": df[config.timestamp_col],
         "episode_id": episode_id,
         "step_index": df.groupby(episode_id).cumcount(),
-        "action": action.astype(np.float32),
+        "action": action.astype(np.int32),
         "gas_t": gas_price.astype(np.float32),
         "transaction_count": tx_count.astype(np.float32),
         "queue_size": queue_size.astype(np.float32),
@@ -118,6 +113,10 @@ def build_state_action_frame(raw_df: pd.DataFrame, config: TransitionBuildConfig
 
 def _derive_action(df, config):
     """Quantize raw gas_used/gas_limit ratio into discrete bin IDs."""
+    if config.action_col not in df.columns:
+        # If building from raw, we might not have 'action' yet. Default to 0.
+        return pd.Series(0, index=df.index, dtype=np.int64)
+        
     action_source = pd.to_numeric(df[config.action_col], errors="coerce").fillna(0.0)
     gas_limit = pd.to_numeric(df.get(config.gas_limit_col, 30e6), errors="coerce").fillna(30e6).replace(0, 30e6)
     ratio = (action_source / gas_limit).clip(0, 1).to_numpy(dtype=np.float32)
@@ -128,20 +127,20 @@ def _derive_action(df, config):
 
 
 def _derive_queue(df, episode_id, action, config):
-    if config.queue_col and config.queue_col in df.columns:
-        return pd.to_numeric(df[config.queue_col], errors="coerce").fillna(0.0).clip(lower=0.0)
 
     arrivals = pd.to_numeric(df[config.transaction_count_col], errors="coerce").fillna(0.0).to_numpy()
     arrival_scale = float(getattr(config, "arrival_scale", 0.5))
-    arrivals = arrivals * arrival_scale  # Scale incoming demand to match physical capacity
+    # DISCRETE PHYSICS: Round arrivals to nearest integer
+    arrivals = np.round(arrivals * arrival_scale).astype(np.int64)
+    
     action_ids = action.to_numpy(dtype=np.int64)
     eps = episode_id.to_numpy()
     bins = np.array(config.action_bins, dtype=np.float32)
     
-    queues = np.zeros(len(df), dtype=np.float32)
-    exec_cap = float(getattr(config, "execution_capacity", 500.0))
+    queues = np.zeros(len(df), dtype=np.int64)
+    exec_cap = int(float(getattr(config, "execution_capacity", 500.0)))
     
-    current_q = 0.0
+    current_q = 0
     prev_ep = None
     
     for i in range(len(df)):
@@ -153,13 +152,19 @@ def _derive_queue(df, episode_id, action, config):
         
         # Map bin ID to execution ratio
         ratio = bins[action_ids[i]]
-        executed = min(np.floor(ratio * current_q), exec_cap)
+        executed = int(min(np.floor(ratio * current_q), exec_cap))
         
         if i < len(df) - 1 and eps[i+1] == eps[i]:
             arrival_next = arrivals[i+1]
-            current_q = max(0.0, current_q - executed + arrival_next)
+            current_q = max(0, current_q - executed + arrival_next)
             
-    return pd.Series(queues, index=df.index)
+    return pd.Series(queues, index=df.index, dtype=np.int64)
+
+
+def _ensure_no_nan(series, col_name):
+    if series.isna().any():
+        n_missing = series.isna().sum()
+        raise ValueError(f"Strict Data Policy Violation: Column '{col_name}' contains {n_missing} NaN values. Please clean your data before building transitions.")
 
 
 def _derive_time_to_deadline(df, episode_id, config):
@@ -170,28 +175,23 @@ def _derive_time_to_deadline(df, episode_id, config):
 def recalculate_queue_and_state(df: pd.DataFrame, config: TransitionBuildConfig) -> pd.DataFrame:
     """
     Recalculate queue_size and patch state vector after Oracle has overwritten the action column.
-    
-    This is CRITICAL for causal consistency: if action changes, the queue dynamics
-    (which depend on action) must be recomputed, and the state vector (which embeds
-    queue_size at index Q_IDX=8) must be patched to match.
-    
-    Must be called AFTER apply_oracle_to_episodes() and BEFORE build_reward_episode_frame().
+    Ensures Normalization Integrity by using the ORIGINAL physical limits for the new state.
     """
     df = df.copy()
     episode_id = df["episode_id"]
     
-    # 1. Recalculate queue with the NEW (Oracle-mixed) discrete actions
+    # 1. Recalculate physical queue with the NEW (Oracle-mixed) discrete actions
     new_queue = _derive_queue(df, episode_id, df["action"], config)
     df["queue_size"] = new_queue.astype(np.float32)
     
-    # 2. Patch state vector at Q_IDX=8 (raw values, no normalization)
+    # 2. Patch state vector at Q_IDX=8
     Q_IDX = 8
     queue_values = new_queue.to_numpy(dtype=np.float32)
-    df[STATE_COLS[Q_IDX]] = queue_values  # s_queue
+    
+    df[STATE_COLS[Q_IDX]] = queue_values
     
     print(f"[+] Recalculated queue dynamics for {episode_id.nunique()} episodes.")
-    print(f"    Queue range: [{queue_values.min():.0f}, {queue_values.max():.0f}]")
-    print(f"    Action unique values: {sorted(df['action'].unique())}")
+    print(f"    New Queue range: [{queue_values.min():.1f}, {queue_values.max():.1f}]")
     
     return df
 

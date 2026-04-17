@@ -5,35 +5,33 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class TransitionBuildConfig:
+    # --- CANONICAL PHYSICS (Locked Source of Truth) ---
+    arrival_scale: float = 0.1          # 10% of real traffic to prevent extreme congestion
+    deadline_penalty: float = 500.0     # V24: Certified Smart+ Optimal Penalty
+    episode_hours: int = 24             # Fixed 24h window
+    history_window: int = 3             # 3-step gas history
+    
+    # --- ENVIRONMENT CONSTANTS ---
+    gas_scaling_factor: float = 10.0    # s_g from SPEC: Efficiency = n * (ref - t) / s_g
+    gas_to_gwei_scale: float = 1e9      # Divisor for raw gas (wei) to Gwei
+    execution_capacity: float = 500.0   # Max transactions per block
+    
+    # --- OPTIONAL METADATA & COLUMNS ---
     timestamp_col: str = "timestamp"
     gas_col: str = "base_fee_per_gas"
-    action_col: str | None = None
-    queue_col: str | None = None
-    history_window: int = 3
-    episode_hours: int = 24
-    action_threshold: float = 0.0
-    deadline_penalty: float = 5000000000.0 # 5,000,000,000.0 points (was 2,000,000.0)
-    queue_penalty: float = 0.0
-    execute_penalty: float = 0.0
-    
-    # Economics & Urgency
-    gas_reference_window: int = 128
-    normalize_state: bool = False
+    action_col: str = "action"
+    queue_col: str = "queue_size"
     gas_used_col: str = "gas_used"
     gas_limit_col: str = "gas_limit"
     transaction_count_col: str = "transaction_count"
-    urgency_alpha: float = 3.0
-    urgency_beta: float = 100.0 # 0.0001 per tx (was 0.01)
-    reward_scale: float = 1e9
-    reward_scale_g: float = 1.0  # Kept for backward compatibility
+    
+    # --- ECONOMICS & URGENCY ---
+    gas_reference_window: int = 128
+    normalize_state: bool = True        # Forced TRUE for strict pipeline
+    urgency_alpha: float = 3.0          # Exponential curve steepness
+    urgency_beta: float = 0.0005          # V25: Certified Smart++ Optimal Urgency
+    reward_scale: float = 1.0           # Baseline scale (Alpha handling in Model)
 
-    # Discrete Action Space (V6)
+    # --- DISCRETE ACTION SPACE (V6) ---
     n_action_bins: int = 5
-    action_bins: tuple = (0.0, 0.25, 0.5, 0.75, 1.0)  # Execution ratios
-
-    # Action Economy Setup
-    C_base: float = 21000.0
-    C_mar: float = 15000.0
-    gas_to_gwei_scale: float = 1e9  # Divisor to map raw gas (wei) to Gwei unit
-    execution_capacity: float = 500.0 # Maximum transactions per block
-    arrival_scale: float = 0.5  # Scale factor for incoming TX (0.5 = 50% of tx_count)
+    action_bins: tuple = (0.0, 0.25, 0.5, 0.75, 1.0)

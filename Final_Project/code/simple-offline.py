@@ -10,9 +10,9 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from d3rlpy.algos import DiscreteCQLConfig
+from d3rlpy.algos import DiscreteCQLConfig, DiscreteBCQConfig
 from d3rlpy.models.encoders import VectorEncoderFactory
-
+from d3rlpy.metrics import DiscreteActionMatchEvaluator
 from utils.load_data import (
     TransitionBuildConfig,
     TransitionValidationError,
@@ -22,6 +22,9 @@ from utils.load_data import (
     load_transition_dataframe,
     validate_transition_dataframe,
 )
+
+from utils.offline_rl.schema import STATE_COLS
+# Imports grouped above for Single Source of Truth handling
 
 from utils.offline_rl.enviroment import CharityGasEnv
 
@@ -132,7 +135,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--reward-scale",
         type=float,
-        default=1e6,
+        default=1.0,
         help="Reward scaling factor (divide raw rewards by this) for stable training",
     )
     parser.add_argument(
@@ -166,7 +169,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--execution-capacity",
         type=float,
-        default=None,
+        default=TransitionBuildConfig.execution_capacity,
         help="Optional cap for execution proxy per step (applied when action=1)",
     )
     parser.add_argument(
@@ -180,16 +183,16 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Disable saving evaluation plots (metrics dashboard and pareto chart)",
     )
-    # Transition build configuration arguments
-    parser.add_argument("--history-window", type=int, default=3)
-    parser.add_argument("--episode-hours", type=int, default=24)
+    # Transition build configuration arguments (Synced with TransitionBuildConfig defaults)
+    parser.add_argument("--history-window", type=int, default=TransitionBuildConfig.history_window)
+    parser.add_argument("--episode-hours", type=int, default=TransitionBuildConfig.episode_hours)
     parser.add_argument("--action-threshold", type=float, default=0.0)
-    parser.add_argument("--deadline-penalty", type=float, default=2000000.0)
-    parser.add_argument("--urgency-beta", type=float, default=100.0)
-    parser.add_argument("--urgency-alpha", type=float, default=3.0)
-    parser.add_argument("--C-base", type=float, default=21000.0)
-    parser.add_argument("--C-mar", type=float, default=15000.0)
-    parser.add_argument("--gas-reference-window", type=int, default=128)
+    parser.add_argument("--deadline-penalty", type=float, default=TransitionBuildConfig.deadline_penalty)
+    parser.add_argument("--urgency-beta", type=float, default=TransitionBuildConfig.urgency_beta)
+    parser.add_argument("--urgency-alpha", type=float, default=TransitionBuildConfig.urgency_alpha)
+    parser.add_argument("--C-base", type=float, default=TransitionBuildConfig.C_base if hasattr(TransitionBuildConfig, 'C_base') else 21000.0)
+    parser.add_argument("--C-mar", type=float, default=TransitionBuildConfig.C_mar if hasattr(TransitionBuildConfig, 'C_mar') else 15000.0)
+    parser.add_argument("--gas-reference-window", type=int, default=TransitionBuildConfig.gas_reference_window)
     parser.add_argument(
         "--disable-state-normalization",
         action="store_true",
@@ -207,16 +210,22 @@ def parse_args() -> argparse.Namespace:
         help="Use Hindsight Oracle to override actions when building from raw",
     )
     parser.add_argument(
-        "--oracle-mix-ratio",
+        "--expert-ratio",
         type=float,
-        default=0.5,
-        help="Probability of using Oracle action (Mix-Policy)",
+        default=0.4,
+        help="Tỷ lệ episodes Expert - 100%% Oracle DP (V28 Episode-Level)",
     )
     parser.add_argument(
-        "--suboptimal-mix-ratio",
+        "--medium-ratio",
         type=float,
-        default=0.2,
-        help="Probability of using Suboptimal action (Mix-Policy)",
+        default=0.3,
+        help="Tỷ lệ episodes Medium - Epsilon-Greedy 70/30 (V28 Episode-Level)",
+    )
+    parser.add_argument(
+        "--random-ratio",
+        type=float,
+        default=0.3,
+        help="Tỷ lệ episodes Random - 100%% Random (V28 Episode-Level)",
     )
     parser.add_argument(
         "--skip-validation", 
@@ -231,21 +240,25 @@ def parse_args() -> argparse.Namespace:
         help="Limit number of episodes to simulate during evaluation for speed (default: 50)"
     )
     
+    parser.add_argument(
+        "--oracle-only",
+        action="store_true",
+        help="Filter training dataset to only include Oracle transitions (policy_type == 1)"
+    )
+    
     return parser.parse_args()
 
-def load_normalization_params(data_dir: Path) -> tuple[np.ndarray | None, np.ndarray | None]:
-    """Safely load state normalization parameters from the Data directory."""
+def load_normalization_params(data_dir: Path) -> tuple[np.ndarray, np.ndarray]:
+    """Strictly load state normalization parameters. Raises error if missing."""
     params_path = data_dir / "state_norm_params.json"
     if not params_path.exists():
-        print(f"[!] Warning: Normalization file {params_path} not found. Using raw observations.")
-        return None, None
-    try:
-        with open(params_path, "r") as f:
-            params = json.load(f)
-            return np.array(params["mins"], dtype=np.float32), np.array(params["maxs"], dtype=np.float32)
-    except Exception as e:
-        print(f"[!] Error loading normalization params: {e}")
-        return None, None
+        raise FileNotFoundError(
+            f"CRITICAL: Normalization file {params_path} not found! "
+            "Policy requires strict normalization. Please build transitions first."
+        )
+    with open(params_path, "r") as f:
+        params = json.load(f)
+        return np.array(params["mins"], dtype=np.float32), np.array(params["maxs"], dtype=np.float32)
 
 def calculate_config_hash(config: TransitionBuildConfig) -> str:
     """Computes a stable MD5 hash of the configuration to lock data to code."""
@@ -254,11 +267,127 @@ def calculate_config_hash(config: TransitionBuildConfig) -> str:
     config_json = json.dumps(config_dict, sort_keys=True)
     return hashlib.md5(config_json.encode("utf-8")).hexdigest()
 
+class BellmanLoggingCallback:
+    """Logs detailed Bellman Equation diagnostics every N steps."""
+    def __init__(self, dataset, interval=1000, gamma=0.99, reward_mean=0.0, reward_std=1.0, log_transform=True):
+        self.dataset = dataset
+        self.interval = interval
+        self.gamma = gamma
+        self.reward_mean = reward_mean
+        self.reward_std = reward_std
+        self.log_transform = log_transform
+
+    def __call__(self, algo, epoch, total_step):
+        if total_step % self.interval == 0:
+            import numpy as np
+            import random
+            
+            # Manual sampling from episodes for compatibility with d3rlpy v2.x
+            # Use 64 samples for statistically meaningful Match Rate (was 5)
+            DIAG_SAMPLE_SIZE = 64
+            obs_list, act_list, rew_list, nobs_list, term_list = [], [], [], [], []
+            sampled_count = 0
+            while sampled_count < DIAG_SAMPLE_SIZE:
+                ep = random.choice(self.dataset.episodes)
+                if len(ep.observations) < 2:
+                    continue # Skip very short episodes
+                
+                idx = random.randint(0, len(ep.observations) - 2)
+                obs_list.append(ep.observations[idx])
+                act_list.append(ep.actions[idx])
+                rew_list.append(ep.rewards[idx])
+                nobs_list.append(ep.observations[idx+1])
+                # Handle d3rlpy v1/v2 compatibility safely
+                is_terminal = (idx == len(ep.observations) - 2) and (getattr(ep, 'terminated', False) or getattr(ep, 'terminal', False))
+                term_list.append(float(is_terminal))
+                sampled_count += 1
+            
+            obs = np.array(obs_list)
+            actions = np.array(act_list)
+            rewards = np.array(rew_list).flatten()
+            next_obs = np.array(nobs_list)
+            terminals = np.array(term_list).flatten()
+
+            # Predict current Q-values
+            q_values = algo.predict_value(obs, actions)
+            # Predict greedy actions for the next state
+            next_actions = algo.predict(next_obs)
+            # Predict value of the next state: max_a Q(s', a)
+            next_q_values = algo.predict_value(next_obs, next_actions)
+            
+            # Bellman Target: R + gamma * (1-terminal) * Q(s', a')
+            targets = rewards + self.gamma * (1.0 - terminals) * next_q_values
+            
+            # Oracle Alignment Match Rate (on full 64-sample batch)
+            predicted_current_actions = algo.predict(obs)
+            oracle_actions = actions.flatten()
+            correct_matches = np.sum(predicted_current_actions == oracle_actions)
+            match_rate = correct_matches / len(oracle_actions) * 100.0 if len(oracle_actions) > 0 else 0.0
+            
+            # Compute summary statistics
+            td_errors = []
+            for i in range(len(q_values)):
+                log_reward = rewards[i]
+                scaled_reward = (log_reward - self.reward_mean) / (self.reward_std + 1e-6)
+                scaled_target = scaled_reward + self.gamma * (1.0 - terminals[i]) * next_q_values[i]
+                td_errors.append(scaled_target - q_values[i])
+            td_errors = np.array(td_errors)
+            
+            # Agent action distribution for this batch
+            pred_unique, pred_counts = np.unique(predicted_current_actions, return_counts=True)
+            pred_dist_str = " | ".join([f"A{int(a)}:{int(c)}" for a, c in zip(pred_unique, pred_counts)])
+            
+            # Oracle action distribution for this batch
+            orac_unique, orac_counts = np.unique(oracle_actions, return_counts=True)
+            orac_dist_str = " | ".join([f"A{int(a)}:{int(c)}" for a, c in zip(orac_unique, orac_counts)])
+            
+            print(f"\n[Step {total_step}] --- DIAGNOSTIC (n={DIAG_SAMPLE_SIZE}) ---")
+            print(f"    [MATCH]  Oracle Alignment : {match_rate:.1f}%  ({correct_matches}/{len(oracle_actions)})")
+            print(f"    [TD ERR] Mean: {td_errors.mean():.4f}  |  Std: {td_errors.std():.4f}  |  Max: {np.abs(td_errors).max():.4f}")
+            print(f"    [Q-VAL]  Mean: {q_values.mean():.4f}  |  Min: {q_values.min():.4f}  |  Max: {q_values.max():.4f}")
+            print(f"    [AGENT]  {pred_dist_str}")
+            print(f"    [ORACLE] {orac_dist_str}")
+
+            # Show detailed breakdown for only 3 samples (to keep logs readable)
+            print("  --- AI BRAIN SCAN (Q-Values) ---")
+            for i in range(min(3, len(q_values))):
+                log_reward = rewards[i]
+                physical_r = np.sign(log_reward) * (np.exp(np.abs(log_reward)) - 1.0)
+                
+                # Quét não AI để lấy toàn bộ điểm đánh giá cho 5 hành động
+                all_qs = []
+                for a_test in range(5):
+                    dummy_action = np.full((1,), a_test, dtype=np.int32)
+                    q_val = algo.predict_value(np.array([obs[i]]), dummy_action)[0]
+                    all_qs.append(float(q_val))
+                
+                qs_str = " | ".join([f"Q{a}={q:.2f}" for a, q in enumerate(all_qs)])
+                
+                oracle_a = int(np.array(actions[i]).item())
+                agent_a = int(np.array(predicted_current_actions[i]).item())
+                
+                print(f"  Sample {i}: Thầy dạy A={oracle_a}  |  Trò đoán A={agent_a}")
+                print(f"       Brain: [{qs_str}]")
+                print(f"       Math : R_phys={physical_r:.1f}  |  TD_err={td_errors[i]:.4f}")
+            print("-------------------------------------------\n", flush=True)
+            # [ANTI-OOM] Dọn rác tensor cache sau mỗi lần chẩn đoán
+            import gc
+            gc.collect()
+
 def train_toy_iql(dataframe, args) -> int:
     # Step A: remove evaluation data from training data
     eval_df = _time_holdout_split(dataframe, args.eval_ratio)
     # Step B: get old data to train
     train_df = dataframe[~dataframe.index.isin(eval_df.index)].copy()
+    
+    if args.oracle_only:
+        if "policy_type" in train_df.columns:
+            n_before = len(train_df)
+            train_df = train_df[train_df["policy_type"] == 1].copy()
+            print(f"[+] Oracle-only mode: Filtered training data from {n_before} to {len(train_df)} transitions.")
+        else:
+            print("[!] Warning: --oracle-only requested but policy_type column missing. Using all data.")
+
     # Step C: sample n transitions from the training data
     n = min (args.sample_size, len(train_df))
     if n <= 0:
@@ -281,12 +410,53 @@ def train_toy_iql(dataframe, args) -> int:
     print(f"[+] Sampled {len(sampled_ep_ids)} episodes ({len(sampled_df)} transitions) for training.")
 
     # Convert to continues action
-    sampled_df['action'] = sampled_df['action'].astype(np.float32).values.reshape(-1, 1)
+    sampled_df['action'] = sampled_df['action'].astype(np.int32)
 
-    # 3) Convert the sampled dataframe to a d3rlpy MDPDataset
-    dataset = build_d3rlpy_dataset(sampled_df, mode=args.mode)
+    # 3) Log-Transformation cho TOÀN BỘ dataframe TRƯỚC khi chia tập
+    # R_new = sign(R) * log(1 + |R|)
+    # CRITICAL: Phải áp dụng trước khi chia train/eval để đảm bảo tính nhất quán
+    print(f"[+] Applying Symmetric Log-Transformation to ALL Rewards...")
+    raw_rewards_all = dataframe["reward"].to_numpy()
+    log_rewards_all = np.sign(raw_rewards_all) * np.log1p(np.abs(raw_rewards_all))
+    dataframe["reward"] = log_rewards_all
+    
+    # Tính Median/IQR trên log-space từ dữ liệu đã sample (training portion)
+    sampled_log = sampled_df["reward"].to_numpy()  # sampled_df vẫn trỏ vào dataframe đã transform
+    sampled_log = np.sign(sampled_log) * np.log1p(np.abs(sampled_log))
+    median = float(np.median(sampled_log))
+    q75, q25 = np.percentile(sampled_log, [75, 25])
+    iqr = float(q75 - q25)
+    if iqr == 0: iqr = 1.0
 
-    # 4) Train a toy IQL agent on the sampled dataset for args.n_steps steps
+    print(f"[+] Log-Space Robust Scaling: Median={median:.4f}, IQR={iqr:.4f}")
+    print(f"    Min (Log): {log_rewards_all.min():.4f}, Max (Log): {log_rewards_all.max():.4f}")
+
+    # 4) Chia tập Train/Eval THEO THỜI GIAN (Đảm bảo đồng nhất với Cloud)
+    # Quy tắc: Học quá khứ, thi tương lai (10% cuối cùng)
+    unique_episodes = sorted(dataframe["episode_id"].unique())
+    split_idx = int(len(unique_episodes) * 0.9)
+    train_ids = unique_episodes[:split_idx]
+    eval_ids = unique_episodes[split_idx:]
+    
+    train_df = dataframe[dataframe["episode_id"].isin(train_ids)].copy()
+    eval_df = dataframe[dataframe["episode_id"].isin(eval_ids)].copy()
+    
+    print(f"[+] Multi-level split: {len(train_ids)} train vs {len(eval_ids)} eval episodes.")
+
+    train_dataset = build_d3rlpy_dataset(train_df, mode=args.mode)
+    eval_dataset = build_d3rlpy_dataset(eval_df, mode=args.mode)
+
+    # [ANTI-OOM] Giải phóng DataFrame gốc và các bản sao sau khi đã convert sang d3rlpy dataset
+    import gc
+    del train_df
+    gc.collect()
+    print("[♻️] Đã dọn rác train_df để giải phóng RAM.")
+
+    # Verify: Double-check reward range of train_dataset
+    sample_ep = train_dataset.episodes[0]
+    print(f"[VERIFY] Train dataset reward sample: min={sample_ep.rewards.min():.4f}, max={sample_ep.rewards.max():.4f} (expect log-space)")
+
+    # 5) Configure model
     try:
         import d3rlpy
     except ImportError:
@@ -294,50 +464,104 @@ def train_toy_iql(dataframe, args) -> int:
         return 1
 
     from d3rlpy.models import VectorEncoderFactory
-    from d3rlpy.preprocessing import MinMaxObservationScaler
-    encoder = VectorEncoderFactory(hidden_units=[256, 256])
+    from d3rlpy.preprocessing import StandardRewardScaler, MinMaxObservationScaler
+    # CPU Sweet-spot: [512, 512] (~270k params). Đủ thông minh nhưng không bóp nghẹt i5-11300H
+    encoder = VectorEncoderFactory(hidden_units=[512, 512])
 
-    # DiscreteCQL Hyperparameters — tuned for discrete 5-bin action space:
-    # - alpha=1.0: conservative penalty weight to prevent OOD action overestimation
-    # - gamma=0.99: standard discount for dense per-step urgency rewards
-    # - batch_size=512: stable gradient with large, diverse dataset
-    # 4) Configure Reward Scaling (Robust Scaling for V19)
-    # We calculate Median/IQR directly from the training data for maximum reliability.
-    rewards_arr = sampled_df["reward"].to_numpy()
-    median = float(np.median(rewards_arr))
-    q75, q25 = np.percentile(rewards_arr, [75, 25])
-    iqr = float(q75 - q25)
-    if iqr == 0: iqr = 1.0
-    
-    from d3rlpy.preprocessing import StandardRewardScaler
-    print(f"[+] Robust Scaling: Median={median:.4f}, IQR={iqr:.4f}")
-    
-    config = DiscreteCQLConfig(
+    # Strict Sync: Use the SAME physical mins/maxs for the model's scaler
+    mins, maxs = load_normalization_params(BASE_DIR.parent / "Data")
+    obs_scaler = MinMaxObservationScaler(minimum=mins, maximum=maxs)
+    print(f"[+] Enforcing Strict Observation Scaler with physical bounds.")
+
+    # === ALGORITHM SELECTION ===
+    config = DiscreteBCQConfig(
         learning_rate=3e-4,
         batch_size=512,
         gamma=0.99,
-        alpha=args.cql_alpha,
+        action_flexibility=0.5, # Tăng tự do (50%) để AI bớt bị gò ép vào Imitator
         encoder_factory=encoder,
-        observation_scaler=MinMaxObservationScaler(),
+        observation_scaler=obs_scaler,
         reward_scaler=StandardRewardScaler(mean=median, std=iqr),
     )
-    cql = config.create(device="cpu")
-    cql.build_with_dataset(dataset)
 
-    # 5) Periodic training with checkpoints
+    # Vị trí số 2: DiscreteCQLConfig (Thuật toán cũ)
+    # config = DiscreteCQLConfig(
+    #     learning_rate=3e-4,
+    #     batch_size=512,
+    #     gamma=0.99,
+    #     alpha=0.1,
+    #     encoder_factory=encoder,
+    #     observation_scaler=obs_scaler,
+    #     reward_scaler=StandardRewardScaler(mean=median, std=iqr),
+    # )
+
+    algo = config.create(device="cpu")
+    algo.build_with_dataset(train_dataset)
+
+    # 6) Define Robust Evaluators
+    class RobustActionMatchEvaluator:
+        def __init__(self, eval_df):
+            # Pre-cache states and oracle actions to make evaluation lightning fast
+            self.states = eval_df[STATE_COLS].to_numpy(dtype=np.float32)
+            self.oracle_actions = pd.to_numeric(eval_df["action"], errors="coerce").fillna(0).astype(np.int32).to_numpy()
+
+        def __call__(self, algo, dataset):
+            # Vectorized prediction - significantly faster than d3rlpy's default
+            predicted_actions = algo.predict(self.states)
+            match_rate = (predicted_actions == self.oracle_actions).mean()
+            return float(match_rate)
+
+    class SlaSimulationEvaluator:
+        def __init__(self, eval_df, config, args, num_episodes=10):
+            self.eval_df = eval_df
+            self.transition_config = config
+            self.args = args
+            self.num_episodes = num_episodes
+
+        def __call__(self, algo, dataset):
+            # Chọn ngẫu nhiên N episodes từ tập eval_df để chạy simulator
+            ep_ids = self.eval_df["episode_id"].unique()
+            sampled_ids = np.random.choice(ep_ids, min(len(ep_ids), self.num_episodes), replace=False)
+            sampled_df = self.eval_df[self.eval_df["episode_id"].isin(sampled_ids)]
+            
+            # Gọi hàm simulate_policy có sẵn
+            res = simulate_policy(sampled_df, algo, self.transition_config, self.args)
+            return res["simulated_deadline_miss_rate"]
+
+    # 7) Periodic training with checkpoints and Deep Diagnostics
     out_dir = BASE_DIR.parent / "output" 
     checkpoint_dir = out_dir / "checkpoints"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"Starting training for {args.n_steps} steps...")
-    run_name = f"DiscreteCQL_V6_{datetime.now().strftime('%Y%m%d_%H%M')}"
+    prefix = "DiscreteBCQ" if isinstance(config, DiscreteBCQConfig) else "DiscreteCQL"
+    run_name = f"{prefix}_V6_{datetime.now().strftime('%Y%m%d_%H%M')}"
 
-    cql.fit(
-        dataset,
+    # Diagnostics: Monitor convergence via TD-errors
+    bellman_callback = BellmanLoggingCallback(
+        train_dataset, 
+        interval=1000, 
+        gamma=args.gamma if hasattr(args, 'gamma') else 0.99,
+        reward_mean=median,
+        reward_std=iqr
+    )
+
+    algo.fit(
+        train_dataset,
         n_steps=args.n_steps,           
         n_steps_per_epoch=args.save_interval, 
         show_progress=True,
-        experiment_name=run_name
+        experiment_name=run_name,
+        callback=bellman_callback,
+        evaluators={
+            "oracle_match": RobustActionMatchEvaluator(eval_df),
+            "sla_miss_rate": SlaSimulationEvaluator(
+                eval_df, 
+                TransitionBuildConfig(**{k: v for k, v in vars(args).items() if k in TransitionBuildConfig.__dataclass_fields__}), 
+                args, 
+                num_episodes=10
+            )
+        }
     )
 
     print(f"Full training complete. Models saved in d3rlpy_logs/{run_name}")
@@ -362,10 +586,8 @@ def simulate_policy(eval_df: pd.DataFrame, algo, config, args: argparse.Namespac
     for ep_id, ep_df in episode_list:
         total_episodes += 1
         
-        # Create simulate enviroment for this episode
-        env = CharityGasEnv(episode_df=ep_df, config=config)
-        env.mins = mins
-        env.maxs = maxs
+        # Create simulate environment for this episode with STRICT normalization
+        env = CharityGasEnv(episode_df=ep_df, config=config, mins=mins, maxs=maxs)
         state, _ = env.reset()
         
         ep_cost = 0.0
@@ -398,6 +620,10 @@ def simulate_policy(eval_df: pd.DataFrame, algo, config, args: argparse.Namespac
     print(f"Miss rate: {miss_rate:.4f}")
     print(f"Mean cost: {mean_cost:.4f}")
     
+    # [ANTI-OOM] Dọn rác Env objects sau khi simulate xong
+    import gc
+    gc.collect()
+    
     return {
         "simulated_cost_per_episode": float(mean_cost),
         "simulated_deadline_miss_rate": float(miss_rate),
@@ -417,17 +643,33 @@ def _load_model_iql(model_path: Path, eval_df: pd.DataFrame, mode: str):
             bootstrap_n = min(2048, len(eval_df))
             bootstrap_df = eval_df.head(bootstrap_n).copy()
             bootstrap_dataset = build_d3rlpy_dataset(bootstrap_df, mode=mode)
-            from d3rlpy.algos import DiscreteCQLConfig
+            from d3rlpy.algos import DiscreteCQLConfig, DiscreteBCQConfig
             from d3rlpy.models import VectorEncoderFactory
             from d3rlpy.preprocessing import MinMaxObservationScaler
-            algo = DiscreteCQLConfig(
+            
+            # Load normalization stats from the central source of truth
+            mins, maxs = load_normalization_params(BASE_DIR.parent / "Data")
+            
+            # --- EVALUATION ALGORITHM SELECTION ---
+            # 1. Evaluate BCQ Model
+            algo = DiscreteBCQConfig(
                 learning_rate=3e-4,
                 batch_size=256,
                 gamma=0.99,
-                alpha=1.0,
+                action_flexibility=0.3,
                 encoder_factory=VectorEncoderFactory(hidden_units=[256, 256]),
-                observation_scaler=MinMaxObservationScaler(),
+                observation_scaler=MinMaxObservationScaler(minimum=mins, maximum=maxs), 
             ).create(device="cpu")
+            
+            # 2. Evaluate CQL Model (Uncomment if needed)
+            # algo = DiscreteCQLConfig(
+            #     learning_rate=3e-4,
+            #     batch_size=256,
+            #     gamma=0.99,
+            #     alpha=0.1,
+            #     encoder_factory=VectorEncoderFactory(hidden_units=[256, 256]),
+            #     observation_scaler=MinMaxObservationScaler(minimum=mins, maximum=maxs), 
+            # ).create(device="cpu")
             algo.build_with_dataset(bootstrap_dataset)
             algo.load_model(model_path_str)
         except Exception as e:
@@ -489,7 +731,7 @@ def run_evaluation(dataframe: pd.DataFrame, args: argparse.Namespace) -> int:
             print(f"[-] Discarded unsampled rows. Memory-optimized eval_df has {len(eval_df)} rows.")
 
     policies: dict[str, np.ndarray] = {}
-    logged_action = pd.to_numeric(eval_df["action"], errors="coerce").fillna(0).astype(np.float32).to_numpy()
+    logged_action = pd.to_numeric(eval_df["action"], errors="coerce").fillna(0).astype(np.int32).to_numpy()
     policies["logged_policy"] = logged_action
     policies["execute_now"] = np.ones(len(eval_df), dtype=np.float32)
 
@@ -611,7 +853,7 @@ def run_evaluation(dataframe: pd.DataFrame, args: argparse.Namespace) -> int:
         algo = _load_model_iql(args.model_path, eval_df, args.mode)
         if algo is None: return 1
 
-        predicted_action = np.asarray(algo.predict(states)).reshape(-1).astype(np.float32)
+        predicted_action = np.asarray(algo.predict(states)).reshape(-1).astype(np.int32)
         policies["rl_policy"] = predicted_action
 
         sim_config = TransitionBuildConfig(
@@ -724,7 +966,7 @@ def _compute_metrics_for_policy(
 
     # For continuous actions, exact coverage might be zero, but we keep the logic
     # or calculate distance-based match later. For now, matching the types.
-    action_hat = np.asarray(action_hat).reshape(-1).astype(np.float32)
+    action_hat = np.asarray(action_hat).reshape(-1).astype(np.int32)
     if len(action_hat) != len(eval_df):
         raise ValueError("Predicted action length does not match evaluation dataframe length.")
 
@@ -933,50 +1175,70 @@ def _save_evaluation_plots(report: dict[str, object], report_path: Path, *, disa
 def main() -> int:
     args = parse_args()
 
+    # V22: Unified configuration from config.py SSoT
+    # Only override columns if explicitly provided via CLI
+    conf_kwargs = {"normalize_state": not args.disable_state_normalization}
+    if args.action_col: conf_kwargs["action_col"] = args.action_col
+    if args.queue_col:  conf_kwargs["queue_col"] = args.queue_col
+    
+    config = TransitionBuildConfig(**conf_kwargs)
+
+    config_hash = calculate_config_hash(config)
+
+    print("\n========================================")
+    print("TRANSITION BUILD/TRAIN CONFIGURATION")
+    for k, v in asdict(config).items():
+        print(f"  {k:<20}: {v}")
+    print("========================================\n")
+    print(f"[+] Config Fingerprint: {config_hash}")
+
     if args.build_from_raw is not None:
         if not args.build_from_raw.exists():
             print(f"Raw parquet not found: {args.build_from_raw}")
             return 1
 
-        config = TransitionBuildConfig(
-            action_col=args.action_col,
-            queue_col=args.queue_col,
-            history_window=args.history_window,
-            episode_hours=args.episode_hours,
-            action_threshold=args.action_threshold,
-            deadline_penalty=args.deadline_penalty,
-            urgency_alpha=args.urgency_alpha,
-            urgency_beta=args.urgency_beta,
-            reward_scale=args.reward_scale,
-            C_base=args.C_base,
-            C_mar=args.C_mar,
-            gas_to_gwei_scale=args.fee_gas_scale,
-            execution_capacity=args.execution_capacity if args.execution_capacity is not None else 500.0,
-            normalize_state=not args.disable_state_normalization,
-        )
-
-        print("\n" + "="*40)
-        print("TRANSITION BUILD CONFIGURATION")
-        print(f"  Deadline Penalty: {config.deadline_penalty}")
-        print(f"  Urgency Beta:     {config.urgency_beta}")
-        print(f"  Reward Scale:     {config.reward_scale}")
-        print(f"  C_base / C_mar:   {config.C_base} / {config.C_mar}")
-        print(f"  Execution Cap:    {config.execution_capacity}")
-        print("="*40 + "\n")
-
-        config_hash = calculate_config_hash(config)
-        print(f"[+] Config Fingerprint: {config_hash}")
-
         try:
             dataframe = build_transitions_from_parquet(
                 args.build_from_raw,
                 config,
-                output_path=args.output,
                 use_oracle=args.use_oracle,
-                oracle_ratio=args.oracle_mix_ratio,
-                suboptimal_ratio=args.suboptimal_mix_ratio,
+                expert_ratio=args.expert_ratio,
+                medium_ratio=args.medium_ratio,
+                random_ratio=args.random_ratio,
                 config_hash=config_hash,
             )
+            
+            # FINAL Normalization Sweep: Must occur BEFORE saving the file
+            if config.normalize_state:
+                from utils.offline_rl.schema import STATE_COLS, NEXT_STATE_COLS
+                
+                state_matrix = dataframe[STATE_COLS].to_numpy(dtype=np.float32)
+                mins = state_matrix.min(axis=0)
+                maxs = state_matrix.max(axis=0)
+                
+                # 1. Save true physical bounds
+                save_path = Path(__file__).resolve().parent / "Data" / "state_norm_params.json"
+                save_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(save_path, "w") as f:
+                    json.dump({"mins": mins.tolist(), "maxs": maxs.tolist()}, f, indent=2)
+                
+                # 2. Apply Normalization to DataFrame IN-PLACE
+                denom = np.where((maxs - mins) == 0, 1.0, (maxs - mins))
+                dataframe[STATE_COLS] = ((dataframe[STATE_COLS] - mins) / denom).astype(np.float32)
+                if all(c in dataframe.columns for c in NEXT_STATE_COLS):
+                    dataframe[NEXT_STATE_COLS] = ((dataframe[NEXT_STATE_COLS] - mins) / denom).astype(np.float32)
+                
+                print(f"[+] FINAL Normalization Sweep complete. True Physical Max Queue saved: {maxs[8]:.1f}")
+                
+            # Now explicitly save the cleanly normalized frame
+            if args.output is not None:
+                from utils.offline_rl.io import save_transition_dataframe
+                save_transition_dataframe(
+                    dataframe, 
+                    args.output, 
+                    config_fingerprint=config_hash, 
+                    compute_reward_stats=True
+                )
         except ValueError as exc:
             print(f"Transition build configuration/data error: {exc}")
             return 1
@@ -990,6 +1252,10 @@ def main() -> int:
             print(f"Input parquet not found: {args.input}")
             return 1
         dataframe = load_transition_dataframe(args.input)
+
+    # V21: Normalization params are already saved during the build_from_raw phase
+    # in build_state_action.py using the correct PHYSICAL units.
+    # Do NOT recalculate them here from the normalized dataframe.
 
     # V19 Robust Scaling: Normalization is now handled by d3rlpy's reward_scaler
     # using Median/IQR metadata from the parquet file. Manual scaling removed.

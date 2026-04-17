@@ -52,7 +52,7 @@ def build_reward_episode_frame(
     gas_t_gwei = df["gas_t"].to_numpy(dtype=np.float32) / gas_scale
     gas_ref_gwei = gas_reference.to_numpy(dtype=np.float32) / gas_scale
     
-    s_g = 10.0  # From REWARD_DESIGN_SPEC.md
+    s_g = getattr(config, "gas_scaling_factor", 10.0)
     R_eff = executed_volume_proxy * ((gas_ref_gwei - gas_t_gwei) / s_g)
 
     # 3. Urgency Penalty Component (Spec 2.2)
@@ -74,9 +74,10 @@ def build_reward_episode_frame(
         == df.groupby("episode_id", dropna=False)["step_index"].transform("max")
     ).to_numpy()
     
-    deadline_miss = (is_last_step & (remaining_q > 0))
+    # Triple-Sync V27: Linear penalty — proportional to remaining queue.
+    # Gradient preserved: partial cleanup always reduces penalty.
     lambda_d = getattr(config, "deadline_penalty", 100.0)
-    R_cat = lambda_d * deadline_miss.astype(np.float32)
+    R_cat = lambda_d * is_last_step.astype(np.float32) * np.maximum(0.0, remaining_q)
     
     # 5. Final Reward Assembly & Scaling
     reward_scale = getattr(config, "reward_scale", 100.0)
@@ -141,6 +142,10 @@ def build_reward_episode_frame(
         "info_json": pd.Series([None] * len(df), dtype="object"),
         "behavior_log_prob": pd.Series([None] * len(df), dtype="object"),
     }
+    
+    # V21: Preserve policy labeling for audit and oracle-only training
+    if "policy_type" in df.columns:
+        df_dict["policy_type"] = df["policy_type"]
     
     # Add named state and next_state columns
     for s_col, ns_col in zip(STATE_COLS, NEXT_STATE_COLS):

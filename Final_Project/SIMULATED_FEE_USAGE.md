@@ -35,26 +35,15 @@ Build the training dataset with **Spec-aligned Reward**, **Robust Arrival Scalin
 - `PYTHONDONTWRITEBYTECODE=1`: Crucial to avoid stale Numba/Python cache.
 
 ```fish
-env PYTHONDONTWRITEBYTECODE=1 OMP_NUM_THREADS=4 PYTHONPATH="/mnt/WindowsD/Reinforcement Learning/labs/Final_Project/code" \
-nohup ./venv/bin/python ./Final_Project/code/simple-offline.py \
+nohup python Final_Project/code/simple-offline.py \
     --build-from-raw Final_Project/Data/data_2024-04-10_2026-04-10.parquet \
-    --output Final_Project/Data/transitions_discrete_v20.parquet \
-    --action-col gas_used \
+    --output Final_Project/Data/transitions_discrete_v28.parquet \
     --use-oracle \
-    --oracle-mix-ratio 0.9 \
-    --suboptimal-mix-ratio 0.05 \
-    --deadline-penalty 1000000.0 \
-    --urgency-beta 50.0 \
-    --urgency-alpha 3.0 \
-    --reward-scale 1.0 \
-    --execution-capacity 500.0 \
-    --arrival-scale 0.05 \
-    --episode-hours 24 \
-    --history-window 3 \
-    --skip-validation \
-    > build_v20.log 2>&1 &
+    --expert-ratio 0.4 \
+    --medium-ratio 0.3 \
+    --random-ratio 0.3 \
+    --mode strict > build_v28.log 2>&1 &
 
-tail -f build_v20.log
 ```
 
 **Expected output:**
@@ -99,23 +88,12 @@ Check action-state correlations before training:
 ## 4) Train (DiscreteCQL V20)
 
 ```fish
-env PYTHONDONTWRITEBYTECODE=1 OMP_NUM_THREADS=4 PYTHONPATH="/mnt/WindowsD/Reinforcement Learning/labs/Final_Project/code" \
-nohup ./venv/bin/python ./Final_Project/code/simple-offline.py \
-    --input Final_Project/Data/transitions_discrete_v20.parquet \
+nohup python Final_Project/code/simple-offline.py \
+    --input Final_Project/Data/transitions_discrete_v28.parquet \
     --train-toy \
-    --n-steps 100000 \
-    --sample-size 5224088 \
-    --save-interval 5000 \
-    --reward-scale 1.0 \
-    --deadline-penalty 1000000.0 \
-    --urgency-beta 50.0 \
-    --arrival-scale 0.05 \
-    --execution-capacity 500.0 \
-    --cql-alpha 0.1 \
-    --skip-validation \
-    > train_v20.log 2>&1 &
-
-tail -f train_v20.log
+    --sample-size 6000000 \
+    --n-steps 500000 \
+    --mode strict > train_BQL_v28.log 2>&1 &
 ```
 
 > **Hyperparameter rationale:**
