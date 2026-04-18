@@ -73,7 +73,17 @@ def main():
     logging.info(f"Loading data from {args.input}")
     df = pd.read_parquet(args.input)
     
-    if args.oracle_only:
+    # === INVERSE NORMALIZATION (Khai nhãn Transformer) ===
+    # Phục hồi dữ liệu vật lý (RAW) để Attention Mechanism hoạt động được.
+    try:
+        current_mins, current_maxs = load_normalization_params(args.input.parent)
+        logging.info(f"[*] Phục hồi vật lý cho 11 đặc trưng (STATE_COLS)...")
+        for i, col in enumerate(STATE_COLS):
+            if col in df.columns:
+                df[col] = df[col] * (current_maxs[i] - current_mins[i]) + current_mins[i]
+        logging.info("✅ Khai nhãn THÀNH CÔNG. Transformer đã thấy được sự biến động vật lý.")
+    except Exception as e:
+        logging.warning(f"⚠️ Cảnh báo Inverse Normalization thất bại: {e}")
         logging.info("Filtering for oracle-only transitions...")
         df = df[df["policy_type"] == 1].copy()
 
@@ -126,18 +136,21 @@ def main():
     rew_scaler = StandardRewardScaler(mean=median, std=iqr)
 
     # -------------------------------------------------------------
-    # 🧠 CẤU HÌNH DECISION TRANSFORMER
+    # 🧠 CẤU HÌNH DECISION TRANSFORMER - SOTA L4 GPU EDITION
     # -------------------------------------------------------------
-    logging.info("Initializing Discrete Decision Transformer...")
+    logging.info("Initializing Discrete Decision Transformer (SOTA L4 Mode)...")
     config = DiscreteDecisionTransformerConfig(
-        batch_size=args.batch_size,
-        learning_rate=1e-4,
-        context_size=args.context_size,  # Bối cảnh quá khứ (20 bước trước)
-        max_timestep=10000,              # Max chiều dài episode Ethereum (thường ~7200)
-        num_heads=4,                     # Multi-head attention
-        num_layers=3,                    # Số lớp Transformer blocks
+        batch_size=1024,                 # Mini-batch khổng lồ cho L4
+        learning_rate=1e-4,              # LR tối ưu cho DT
+        context_size=64,                 # Nhìn thấu 64 bước quá khứ
+        max_timestep=10000,              # Bao phủ toàn bộ ngày giao dịch
+        num_heads=8,                     # 8 Attention Heads
+        num_layers=10,                   # Não sâu 10 tầng
+        warmup_tokens=102400,            # Warmup lâu hơn để ổn định Gradient
+        final_tokens=6500000000,         # Khớp với workload 100k steps x 1024 x 64
         observation_scaler=obs_scaler,
         reward_scaler=rew_scaler,
+        compile_graph=True,              # JIT Compilation cho tốc độ tối đa
     )
 
     # Nếu có GPU, ép chạy trên GPU (Dùng PyTorch gốc cho tương thích d3rlpy v2)
@@ -149,7 +162,7 @@ def main():
     algo.build_with_dataset(train_dataset)
 
     args.outdir.mkdir(parents=True, exist_ok=True)
-    run_name = f"DT_V27_{datetime.now().strftime('%Y%m%d_%H%M')}"
+    run_name = f"DT_V28_{datetime.now().strftime('%Y%m%d_%H%M')}"
     
     from d3rlpy.metrics import DiscreteActionMatchEvaluator
     
@@ -171,7 +184,7 @@ def main():
                 # 1. Đo trình độ học thuật (Oracle Match Rate) trên tập Eval
                 print(f"\n[Step {total_step}] --- 🔬 EVALUATION REPORT ---")
                 try:
-                    match_rate = self.evaluator(algo)
+                    match_rate = self.evaluator(algo, self.eval_dataset)
                     print(f"  > Oracle Match Rate: {match_rate*100:.2f}%")
                 except Exception as e:
                     print(f"  > Oracle Match Rate: Evaluation failed ({e})")

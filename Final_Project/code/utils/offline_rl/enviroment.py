@@ -156,7 +156,6 @@ class CharityGasEnv(gym.Env):
         reward_scale = self.config.reward_scale
         total_reward = (R_eff - urgency_penalty - R_cat) / reward_scale
         
-        self.current_step += 1
 
         info = {
             "executed": executed_volume,
@@ -183,9 +182,8 @@ class CharityGasEnv(gym.Env):
             next_obs[self._Q_IDX] = (self.queue_size - self.mins[self._Q_IDX]) / denom[self._Q_IDX]
             next_obs[self._T_IDX] = (self.time_to_deadline - self.mins[self._T_IDX]) / denom[self._T_IDX]
         else:
-            raise ValueError(
-                "CRITICAL: Normalization parameters (mins/maxs) are NOT set! "
-                "AI cannot perceive raw physical values. Check your evaluation loader."
-            )
+            # Nếu không có bộ chuẩn hóa, trả về giá trị vật lý thô (Dành cho DT có scaler nội bộ)
+            next_obs[self._Q_IDX] = float(self.queue_size)
+            next_obs[self._T_IDX] = float(self.time_to_deadline)
 
         return next_obs, total_reward, terminated, truncated, info

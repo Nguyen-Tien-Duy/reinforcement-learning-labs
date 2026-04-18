@@ -47,7 +47,7 @@ def verify_dataset(parquet_path, json_path):
     else:
         print(f"✅ PASSED: s_queue hoàn toàn nằm gọn trong dải [0, 1]. Max thực tế = {s_queue_max:.4f}")
 
-    # 4. Kiểm định chéo Toán học (Arrival Scale = 0.05)
+    # 4. Kiểm định chéo Toán học (Arrival Scale = 0.1)
     print("\n[4] KIỂM TOÁN LẠI TOÁN HỌC (ARRIVAL SCALE XÁC MINH)")
     # Lấy 1 episode bất kỳ để test
     ep_df = df[df["episode_id"] == df["episode_id"].unique()[0]].reset_index(drop=True)
@@ -56,20 +56,21 @@ def verify_dataset(parquet_path, json_path):
     test_passed = True
     for i in range(1, 10): # Test 10 step đầu
         tx_count = ep_df.loc[i, "transaction_count"]
-        arrival_physical = tx_count * 0.05
+        arrival_physical = tx_count * 0.1
         
         # This is a soft check, because actual execution limits and rounding might drift slowly.
-        # But we verify that arrival scale is indeed operating in the ~5% magnitude.
+        # But we verify that arrival scale is indeed operating in the ~10% magnitude.
         queue_increase_if_no_exec = ep_df.loc[i-1, "queue_size"] + arrival_physical
         
-        if queue_increase_if_no_exec < ep_df.loc[i, "queue_size"]:
+        # Thêm sai số 1.5 giao dịch do np.round trong quá trình builder lưu kết quả
+        if (queue_increase_if_no_exec + 1.5) < ep_df.loc[i, "queue_size"]:
             print(f"❌ FAILED: Ở step {i}, hàng đợi thực tế ({ep_df.loc[i, 'queue_size']}) CÒN LỚN HƠN tổng dồn. Dấu hiệu dùng scale sai (VD 0.5)!")
             test_passed = False
             passed_all = False
             break
             
     if test_passed:
-        print(f"✅ PASSED: Toán học hàng đợi khớp với arrival_scale=0.05.")
+        print(f"✅ PASSED: Toán học hàng đợi khớp với arrival_scale=0.1.")
 
     print("\n" + "="*50)
     if passed_all:
@@ -81,6 +82,6 @@ def verify_dataset(parquet_path, json_path):
 
 if __name__ == "__main__":
     import sys
-    parquet_file = "Final_Project/Data/transitions_discrete_v21_TRUE_ULTIMATE.parquet"
-    json_file = "Final_Project/Data/state_norm_params.json"
+    parquet_file = sys.argv[1] if len(sys.argv) > 1 else "Final_Project/Data/transitions_discrete_v28.parquet"
+    json_file = sys.argv[2] if len(sys.argv) > 2 else "Final_Project/Data/state_norm_params.json"
     verify_dataset(parquet_file, json_file)

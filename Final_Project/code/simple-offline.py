@@ -1217,7 +1217,7 @@ def main() -> int:
                 maxs = state_matrix.max(axis=0)
                 
                 # 1. Save true physical bounds
-                save_path = Path(__file__).resolve().parent / "Data" / "state_norm_params.json"
+                save_path = Path(__file__).resolve().parent.parent / "Data" / "state_norm_params.json"
                 save_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(save_path, "w") as f:
                     json.dump({"mins": mins.tolist(), "maxs": maxs.tolist()}, f, indent=2)
@@ -1252,13 +1252,29 @@ def main() -> int:
             print(f"Input parquet not found: {args.input}")
             return 1
         dataframe = load_transition_dataframe(args.input)
-
-    # V21: Normalization params are already saved during the build_from_raw phase
-    # in build_state_action.py using the correct PHYSICAL units.
-    # Do NOT recalculate them here from the normalized dataframe.
-
-    # V19 Robust Scaling: Normalization is now handled by d3rlpy's reward_scaler
-    # using Median/IQR metadata from the parquet file. Manual scaling removed.
+        
+        # === INVERSE NORMALIZATION (Phục hồi vật lý) ===
+        # Do file Parquet v28 đã bị chuẩn hóa sẵn về 0-1, nhưng Scaler của d3rlpy 
+        # lại dùng mins/maxs vật lý thô, nên chúng ta cần nhân ngược lại để AI "sáng mắt".
+        try:
+            from utils.offline_rl.schema import STATE_COLS
+            from pathlib import Path
+            
+            BASE_DIR = Path(__file__).resolve().parent
+            # Gọi trực tiếp hàm nội bộ đã được định nghĩa ở dòng 251
+            mins_phys, maxs_phys = load_normalization_params(BASE_DIR.parent / "Data")
+            
+            print(f"[*] Đang thực hiện Inverse Normalization cho {len(STATE_COLS)} cột tính năng...")
+            for i, col in enumerate(STATE_COLS):
+                if col in dataframe.columns:
+                    # Công thức Inverse: X_raw = X_norm * (Max - Min) + Min
+                    # Vì trong build_state_action chỉ chia cho Max nên ta chỉ cần nhân Max 
+                    # (Hoặc chuẩn nhất là dùng đúng công thức d3rlpy đang kỳ vọng)
+                    dataframe[col] = dataframe[col] * (maxs_phys[i] - mins_phys[i]) + mins_phys[i]
+            
+            print("✅ Phục hồi vật lý THÀNH CÔNG. AI đã có thể nhìn thấy dữ liệu thô.")
+        except Exception as e:
+            print(f"[!] Cảnh báo Inverse Normalization thất bại: {e}. AI có thể vẫn bị 'mù'.")
 
     if args.skip_validation:
         print("[!] Skipping data validation as requested. Startup will be faster.")

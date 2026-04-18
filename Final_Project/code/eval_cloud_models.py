@@ -4,7 +4,7 @@ import numpy as np
 import d3rlpy
 import torch
 from pathlib import Path
-from utils.offline_rl.env_v2 import CharityGasEnv
+from utils.offline_rl.enviroment import CharityGasEnv
 
 def main():
     parser = argparse.ArgumentParser()

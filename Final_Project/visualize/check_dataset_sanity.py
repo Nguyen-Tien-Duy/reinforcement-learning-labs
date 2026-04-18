@@ -49,7 +49,7 @@ def check_sanity(parquet_path):
 
 if __name__ == "__main__":
     import sys
-    path = sys.argv[1] if len(sys.argv) > 1 else "Final_Project/Data/transitions_discrete_v21.parquet"
+    path = sys.argv[1] if len(sys.argv) > 1 else "Final_Project/Data/transitions_discrete_v28.parquet"
     if Path(path).exists():
         check_sanity(path)
     else:

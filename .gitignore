@@ -8,6 +8,7 @@
 **/d3rlpy_logs/
 **/output/
 **/results/
+**/good_models/
 
 
 # Ignore common LaTeX generated files
