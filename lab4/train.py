@@ -3,9 +3,28 @@ import numpy as np
 import torch 
 from agent import DQN 
 import matplotlib.pyplot as plt 
+import os
+from datetime import datetime
+import logging
+
+# Create log directory if it doesn't exist
+log_dir = os.path.join(os.path.dirname(__file__), 'logs')
+os.makedirs(log_dir, exist_ok=True)
+
+# Configure logging
+log_file = os.path.join(log_dir, 'training-deepRL.log')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[
+        logging.FileHandler(log_file, mode='w', encoding='utf-8'),
+        logging.StreamHandler()
+    ]
+)
+
 
 def train():
-    env = gym.make("LunarLander-v2")
+    env = gym.make("CartPole-v1")
     state_size = env.observation_space.shape[0]
     action_size = env.action_space.n 
     agent = DQN(state_size, action_size, seed = 36)
@@ -45,6 +64,9 @@ def train():
     plt.plot(np.arange(len(scores)), scores)
     plt.ylabel('Score')
     plt.xlabel('Episode #')
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    save_path = os.path.join(log_dir, f"deepRL-reward_{timestamp}.svg")
+    plt.savefig(save_path)
     plt.show()
 
 if __name__ == "__main__":
