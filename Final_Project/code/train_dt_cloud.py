@@ -68,6 +68,7 @@ def main():
     parser.add_argument("--batch-size", type=int, default=256, help="Batch size (TỐI ƯU CHO L4 24GB)")
     parser.add_argument("--context-size", type=int, default=20, help="Độ dài chuỗi ngữ cảnh cho Transformer (K)")
     parser.add_argument("--oracle-only", action="store_true", help="Chỉ dạy cho Agent bằng dữ liệu chuẩn của Oracle")
+    parser.add_argument("--debug", action="store_true", help="Chế độ Debug: Chạy Toy model cực nhẹ để test lỗi")
     args = parser.parse_args()
 
     logging.info(f"Loading data from {args.input}")
@@ -77,11 +78,15 @@ def main():
     # Phục hồi dữ liệu vật lý (RAW) để Attention Mechanism hoạt động được.
     try:
         current_mins, current_maxs = load_normalization_params(args.input.parent)
-        logging.info(f"[*] Phục hồi vật lý cho 11 đặc trưng (STATE_COLS)...")
+        logging.info(f"[*] Đang khôi phục vật lý cho {len(STATE_COLS)} đặc trưng trạng thái (Cloud Mode)...")
         for i, col in enumerate(STATE_COLS):
             if col in df.columns:
-                df[col] = df[col] * (current_maxs[i] - current_mins[i]) + current_mins[i]
-        logging.info("✅ Khai nhãn THÀNH CÔNG. Transformer đã thấy được sự biến động vật lý.")
+                # Safe Guard: Chỉ khôi phục nếu dữ liệu thực sự đang bị nén [0, 1]
+                if df[col].max() <= 1.01 and df[col].min() >= -1.01:
+                    df[col] = df[col] * (current_maxs[i] - current_mins[i]) + current_mins[i]
+                else:
+                    logging.info(f"  > Bỏ qua {col}: Đã là giá trị vật lý (Max={df[col].max():.2f})")
+        logging.info("✅ Khải thuật vật lý hoàn tất. H100 đã sẵn sàng với RAW DATA.")
     except Exception as e:
         logging.warning(f"⚠️ Cảnh báo Inverse Normalization thất bại: {e}")
         logging.info("Filtering for oracle-only transitions...")
@@ -136,22 +141,39 @@ def main():
     rew_scaler = StandardRewardScaler(mean=median, std=iqr)
 
     # -------------------------------------------------------------
-    # 🧠 CẤU HÌNH DECISION TRANSFORMER - SOTA L4 GPU EDITION
+    # 🧠 CẤU HÌNH DECISION TRANSFORMER - CHẾ ĐỘ LINH HOẠT
     # -------------------------------------------------------------
-    logging.info("Initializing Discrete Decision Transformer (SOTA L4 Mode)...")
-    config = DiscreteDecisionTransformerConfig(
-        batch_size=1024,                 # Mini-batch khổng lồ cho L4
-        learning_rate=1e-4,              # LR tối ưu cho DT
-        context_size=64,                 # Nhìn thấu 64 bước quá khứ
-        max_timestep=10000,              # Bao phủ toàn bộ ngày giao dịch
-        num_heads=8,                     # 8 Attention Heads
-        num_layers=10,                   # Não sâu 10 tầng
-        warmup_tokens=102400,            # Warmup lâu hơn để ổn định Gradient
-        final_tokens=6500000000,         # Khớp với workload 100k steps x 1024 x 64
-        observation_scaler=obs_scaler,
-        reward_scaler=rew_scaler,
-        compile_graph=True,              # JIT Compilation cho tốc độ tối đa
-    )
+    if args.debug:
+        logging.info("🛠️ [DEBUG MODE] Đang dùng cấu hình TOY SIÊU NHẸ để test lỗi...")
+        config = DiscreteDecisionTransformerConfig(
+            batch_size=32,
+            learning_rate=1e-4,
+            context_size=5,
+            max_timestep=10000,  # [BẮT BUỘC] Giống SOTA để không bị out of index
+            num_heads=2,
+            num_layers=2,
+            observation_scaler=obs_scaler,
+            reward_scaler=rew_scaler,
+            compile_graph=False, # Debug không cần JIT
+        )
+        args.n_steps = 200
+        n_steps_per_epoch = 100
+    else:
+        logging.info("🚀 [SOTA MODE] Đang dùng cấu hình KHỔNG LỒ cho H100...")
+        config = DiscreteDecisionTransformerConfig(
+            batch_size=args.batch_size,
+            learning_rate=1e-4,
+            context_size=args.context_size,
+            max_timestep=10000,
+            num_heads=8,
+            num_layers=10,
+            warmup_tokens=102400,
+            final_tokens=6500000000,
+            observation_scaler=obs_scaler,
+            reward_scaler=rew_scaler,
+            compile_graph=True,
+        )
+        n_steps_per_epoch = 5000
 
     # Nếu có GPU, ép chạy trên GPU (Dùng PyTorch gốc cho tương thích d3rlpy v2)
     import torch
@@ -166,50 +188,70 @@ def main():
     
     from d3rlpy.metrics import DiscreteActionMatchEvaluator
     
-    # [ĐỘ LẠI - V28] Callback chẩn đoán và tự chấm điểm cho Decision Transformer
+    # [ĐỘ LẠI - V28] Callback chẩn đoán 'Sáng bừng trí tuệ' cho Decision Transformer
     class DTDiagnosticCallback:
-        def __init__(self, train_dataset, eval_dataset, interval=5000):
+        def __init__(self, train_dataset, eval_dataset, interval=5000, context_size=20):
             self.train_dataset = train_dataset
             self.eval_dataset = eval_dataset
             self.interval = interval
-            # Khởi tạo bộ chấm điểm Oracle Match Rate 
-            from d3rlpy.metrics import DiscreteActionMatchEvaluator
-            self.evaluator = DiscreteActionMatchEvaluator(self.eval_dataset)
+            self.context_size = context_size
 
         def __call__(self, algo, epoch, total_step):
             if total_step % self.interval == 0 and total_step > 0:
                 import random
                 import numpy as np
+                import torch
                 
-                # 1. Đo trình độ học thuật (Oracle Match Rate) trên tập Eval
-                print(f"\n[Step {total_step}] --- 🔬 EVALUATION REPORT ---")
-                try:
-                    match_rate = self.evaluator(algo, self.eval_dataset)
-                    print(f"  > Oracle Match Rate: {match_rate*100:.2f}%")
-                except Exception as e:
-                    print(f"  > Oracle Match Rate: Evaluation failed ({e})")
+                print(f"\n[Step {total_step}] --- 🧠 DT BRAIN SCAN REPORT ---")
                 
-                # 2. TRANSFORMER BRAIN SCAN (Chuỗi ngẫu nhiên từ tập Train)
-                print(f"--- 🧠 TRANSFORMER BRAIN SCAN (Sequence Context) ---")
-                ep = random.choice(self.train_dataset.episodes)
-                seq_len = len(ep.observations)
-                for i in range(min(3, seq_len)):
-                    idx = random.randint(0, seq_len - 2)
-                    obs_t = ep.observations[idx]
-                    oracle_a = int(np.array(ep.actions[idx]).item())
-                    target_reward = float(np.array(ep.rewards[idx]).item())
+                # Đo khả năng dự đoán trên tập EVAL (Dùng thực tế 20 bước lịch sử)
+                match_count = 0
+                test_samples = 50
+                
+                # Pick ngẫu nhiên 50 tình huống để kiểm tra "IQ"
+                for _ in range(test_samples):
+                    ep = random.choice(self.eval_dataset.episodes)
+                    if len(ep.observations) <= self.context_size + 1: continue
                     
-                    print(f"  Sample {i}: Thầy dạy A={oracle_a} | State Context={obs_t[0]:.0f},{obs_t[3]:.2f}")
-                    print(f"       Status: DT is learning conditional sequence mapping for R={target_reward:.2f}")
+                    # Cắt một lát cắt lịch sử (Context)
+                    idx = random.randint(self.context_size, len(ep.observations) - 2)
+                    obs_slice = ep.observations[idx-self.context_size+1 : idx+1]
+                    act_slice = ep.actions[idx-self.context_size+1 : idx+1]
+                    rew_slice = ep.rewards[idx-self.context_size+1 : idx+1]
+                    
+                    # Bắt AI đoán action tiếp theo dựa trên lịch sử này
+                    # (Dùng API nội bộ của d3rlpy để dự đoán chuỗi)
+                    try:
+                        # Convert to tensors
+                        in_obs = torch.tensor(obs_slice, dtype=torch.float32).unsqueeze(0).to(algo.device)
+                        in_act = torch.tensor(act_slice, dtype=torch.long).unsqueeze(0).to(algo.device)
+                        in_rew = torch.tensor(rew_slice, dtype=torch.float32).unsqueeze(0).to(algo.device)
+                        in_ret = torch.ones((1, self.context_size, 1)).to(algo.device) * 1.0 # Pseudo return
+                        in_tim = torch.arange(idx-self.context_size+1, idx+1).unsqueeze(0).to(algo.device)
+                        
+                        pred_actions = algo.impl._predict_best_action(in_obs, in_act, in_rew, in_ret, in_tim)
+                        dt_action = int(pred_actions[0][-1].item())
+                        oracle_action = int(ep.actions[idx])
+                        
+                        if dt_action == oracle_action:
+                            match_count += 1
+                    except:
+                        continue
+                
+                acc = (match_count / test_samples) * 100
+                print(f"  > Contextual Match Rate (IQ Test): {acc:.2f}%")
+                
+                # In thử 1 mẫu cho bác soi
+                print(f"  > Sample Detail: AI Predicted={dt_action} | Oracle={oracle_action} " + ("✅" if dt_action == oracle_action else "❌"))
                 print("--------------------------------------------------\n", flush=True)
 
-    dt_callback = DTDiagnosticCallback(train_dataset, eval_dataset, interval=5000)
+    dt_callback = DTDiagnosticCallback(train_dataset, eval_dataset, interval=5000, context_size=args.context_size)
 
     logging.info(f"🚀 Bắt đầu HUẤN LUYỆN L4 CLOUD ({args.n_steps} steps - ~5.6 Passes qua dữ liệu)...")
     algo.fit(
         train_dataset,
         n_steps=args.n_steps,
-        n_steps_per_epoch=5000,
+        n_steps_per_epoch=n_steps_per_epoch,
         show_progress=True,
         experiment_name=run_name,
         callback=dt_callback

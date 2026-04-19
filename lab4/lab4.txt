@@ -1,0 +1,119 @@
+Thực hành Chương 4 — DEEP Q-NETWORK (DQN)
+Mục tiêu thực hành chương 4:
+1. Hiểu hạn chế của Q-table trong không gian trạng thái lớn/liên tục
+2. Hiểu cơ chế function approximation trong RL
+3. Hiểu bản chất của bootstrapping với neural network
+4. Nắm được các kỹ thuật ổn định training trong Deep RL
+5. Làm nền tảng cho các thuật toán nâng cao (PPO, SAC)
+Sinh viên sẽ lập trình ba thành phần cốt lõi:
+1. Q-function Approximation với Neural Network
+2. Experience Replay
+3. Target Network (ổn định training)
+Môi trường sử dụng:
+• Environment: Gymnasium
+• Môi trường: CartPole-v1 , LunaLander, BipedalWalker
+• Framework Deep Learning: PyTorch
+4.1 — Q-function Approximation với Neural Network
+Mục tiêu
+• Hiểu vì sao cần Deep Learning trong RL
+• Xây dựng Q-network
+• Thay thế Q-table bằng hàm xấp xỉ
+Ý tưởng chính
+Thay vì: 𝑄(𝑠, 𝑎) → 𝑏ả𝑛𝑔
+Ta dùng: 𝑄(𝑠, 𝑎) → 𝑄!(𝑠, 𝑎)
+trong đó:
+• 𝜃: tham số mạng neural
+• Input: trạng thái 𝑠
+• Output: vector Q-value cho tất cả action
+PhD Nguyễn Thị Khánh Tiên
+tienntk@ut.edu.vn
+- 2 -
+Kiến trúc mạng cơ bản:
+• Input: state vector (CartPole: 4 chiều)
+• Hidden: Fully-connected + ReLU
+• Output: số node = số action
+Yêu cầu thực hiện:
+1. Xây dựng Q-network bằng PyTorch
+o Input: state
+o Output: Q-value
+2. Test forward pass
+Câu hỏi cần trả lời
+1. Vì sao Q-table không dùng được cho state liên tục?
+2. Function approximation trong RL là gì?
+3. Vì sao output layer = số action?
+4. Vai trò của ReLU là gì?
+5. Neural network giúp generalize như thế nào?
+4.2 — Deep Q-Learning (DQN cơ bản)
+Mục tiêu
+• Hiểu cách train Q-network
+• Áp dụng Bellman Equation trong Deep Learning
+Công thức cập nhật: 𝑄(𝑠, 𝑎) ← 𝑟 + 𝛾max
+" 𝑄(𝑠#, 𝑎)
+Loss function: 𝐿 = (𝑡𝑎𝑟𝑔𝑒𝑡 − 𝑄(𝑠, 𝑎))$
+Yêu cầu thực hiện
+1. Viết training loop
+2. Implement epsilon-greedy
+3. Tính loss và backpropagation
+4. Train trên CartPole
+Câu hỏi cần trả lời
+1. Vì sao target dùng max Q(s’, a)?
+2. Bootstrapping trong DQN là gì?
+3. Nếu target thay đổi liên tục → điều gì xảy ra?
+PhD Nguyễn Thị Khánh Tiên
+tienntk@ut.edu.vn
+- 3 -
+4. So sánh với Q-learning (tabular)
+4.3 — Experience Replay
+Mục tiêu:
+• Giảm correlation giữa các sample
+• Tăng stability
+Ý tưởng: Lưu buffer: (s, a, r, s', done) → Sample random batch để train
+Yêu cầu thực hiện:
+1. Cài replay buffer
+2. Sample mini-batch
+3. Train theo batch
+Câu hỏi cần trả lời
+1. Vì sao không train trực tiếp từng bước?
+2. Correlation trong RL là gì?
+3. Replay buffer giúp gì cho convergence?
+4. Buffer size ảnh hưởng thế nào?
+4.4 — Target Network
+Mục tiêu
+• Ổn định training
+• Giảm oscillation
+Ý tưởng
+• Có 2 network:
+o Q-network (train)
+o Target network (fixed)
+o Update: target_net ← q_net (mỗi N step)
+Yêu cầu thực hiện
+1. Tạo target network
+2. Update định kỳ
+3. So sánh với không dùng target network
+Câu hỏi cần trả lời
+1. Vì sao target network giúp ổn định?
+PhD Nguyễn Thị Khánh Tiên
+tienntk@ut.edu.vn
+- 4 -
+2. Nếu không dùng target network thì sao?
+3. Update quá thường xuyên → ảnh hưởng gì?
+4.5 — Đánh giá & Phân tích
+Yêu cầu thực hiện
+• Vẽ:
+o Reward theo episode
+o Loss theo iteration
+• So sánh:
+o DQN vs Random agent
+o DQN vs Q-learning
+Để so sánh cần thực hiện các thử nghiệm sau :
+1. Tắt Experience Replay
+2. Tắt Target Network
+3. Thay đổi:
+o learning rate
+o epsilon decay
+o batch size
+Câu hỏi cần trả lời
+1. Khi nào model học tốt (loss)?
+2. Khi nào agent đạt policy tốt (reward)?
+3. Vì sao Deep RL khó ổn định hơn tabular RL?
+4. Overestimation bias là gì?

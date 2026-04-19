@@ -431,6 +431,23 @@ def train_toy_iql(dataframe, args) -> int:
     print(f"[+] Log-Space Robust Scaling: Median={median:.4f}, IQR={iqr:.4f}")
     print(f"    Min (Log): {log_rewards_all.min():.4f}, Max (Log): {log_rewards_all.max():.4f}")
 
+    # === INVERSE NORMALIZATION (Khôi phục vật lý cho Training - Fix Nén Kép) ===
+    # Quy tắc: Khôi phục RAW trước khi đưa vào Model có Observation Scaler nội bộ.
+    try:
+        current_mins, current_maxs = load_normalization_params(BASE_DIR.parent / "Data")
+        print(f"[*] Đang khôi phục vật lý cho {len(STATE_COLS)} đặc trưng trạng thái...")
+        # LƯU Ý: Phải áp dụng trên TOÀN BỘ dataframe để cả tập Train và Eval đều đúng
+        for i, col in enumerate(STATE_COLS):
+            if col in dataframe.columns:
+                # Safe Guard: Chỉ khôi phục nếu dữ liệu đang ở dạng [0, 1]
+                if dataframe[col].max() <= 1.01 and dataframe[col].min() >= -1.01:
+                    dataframe[col] = dataframe[col] * (current_maxs[i] - current_mins[i]) + current_mins[i]
+                else:
+                    print(f"  > Bỏ qua {col}: Có vẻ đã là giá trị vật lý (Max={dataframe[col].max():.2f})")
+        print("✅ Khải thuật vật lý hoàn tất.")
+    except Exception as e:
+        print(f"⚠️ Cảnh báo Inverse Normalization thất bại: {e}. AI có thể bị nén kép!")
+
     # 4) Chia tập Train/Eval THEO THỜI GIAN (Đảm bảo đồng nhất với Cloud)
     # Quy tắc: Học quá khứ, thi tương lai (10% cuối cùng)
     unique_episodes = sorted(dataframe["episode_id"].unique())
@@ -452,9 +469,10 @@ def train_toy_iql(dataframe, args) -> int:
     gc.collect()
     print("[♻️] Đã dọn rác train_df để giải phóng RAM.")
 
-    # Verify: Double-check reward range of train_dataset
+    # Verify: Double-check reward and observation ranges
     sample_ep = train_dataset.episodes[0]
-    print(f"[VERIFY] Train dataset reward sample: min={sample_ep.rewards.min():.4f}, max={sample_ep.rewards.max():.4f} (expect log-space)")
+    print(f"[VERIFY] Train dataset reward sample: {sample_ep.rewards.min():.4f} to {sample_ep.rewards.max():.4f}")
+    print(f"[VERIFY] Train dataset obs (Queue) sample: {sample_ep.observations[0][8]:.2f} (giá trị vật lý)")
 
     # 5) Configure model
     try:
@@ -494,6 +512,29 @@ def train_toy_iql(dataframe, args) -> int:
     #     observation_scaler=obs_scaler,
     #     reward_scaler=StandardRewardScaler(mean=median, std=iqr),
     # )
+
+    # === DEEP DIAGNOSTICS: QUÉT NỘI NÃO AI TRƯỚC KHI TRAIN ===
+    print("\n" + "🔍" * 20)
+    print("--- KIỂM CHỨNG BỘ NÉN (SCALER SCAN) ---")
+    sample_obs = np.array([train_dataset.episodes[0].observations[0]])
+    sample_rew = float(train_dataset.episodes[0].rewards[0].item())
+    
+    # 1. Kiểm tra nén Observation (MinMax Vật lý)
+    import torch
+    sample_tensor = torch.tensor(sample_obs, dtype=torch.float32)
+    obs_scaled_ai = obs_scaler.transform(sample_tensor).cpu().numpy()
+    q_raw = float(sample_obs[0][8])
+    q_scaled = float(obs_scaled_ai[0][8])
+    print(f"[OBS] Queue Vật lý: {q_raw:.2f} -> AI thấy (Nén): {q_scaled:.6f}")
+    
+    # 2. Kiểm tra nén Reward (Standard Log-Space)
+    # Công thức: (R - Median) / IQR
+    rew_scaled_manual = (sample_rew - median) / iqr
+    print(f"[REW] Reward Log: {sample_rew:.4f}")
+    print(f"      Cấu hình: Median={median:.4f}, IQR={iqr:.4f}")
+    print(f"      Tính thủ công: ({sample_rew:.4f} - {median:.4f}) / {iqr:.4f} = {rew_scaled_manual:.4f}")
+    print("---  XÁC NHẬN: HỆ QUY CHIẾU ĐÃ ĐỒNG NHẤT SOTA ---")
+    print("🔍" * 20 + "\n")
 
     algo = config.create(device="cpu")
     algo.build_with_dataset(train_dataset)

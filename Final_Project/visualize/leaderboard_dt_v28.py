@@ -9,58 +9,80 @@ import os
 import concurrent.futures
 import multiprocessing
 from pathlib import Path
+import sys
+
+# Tự động thêm đường dẫn để tìm thấy module utils
+sys.path.append(os.path.abspath("Final_Project/code"))
+
 from utils.offline_rl.enviroment import CharityGasEnv
 from utils.offline_rl.config import TransitionBuildConfig
 from tabulate import tabulate
 from d3rlpy.algos import StatefulTransformerWrapper
+from tqdm import tqdm
+
+# Cấu hình LOGGING để đỡ rác màn hình
+import logging
+logging.getLogger("d3rlpy").setLevel(logging.ERROR)
+
+def log_transform_reward(r: float) -> float:
+    """Khớp chính xác với phép biến đổi trong train_dt_cloud.py và simple-offline.py"""
+    return float(np.sign(r) * np.log1p(np.abs(r)))
 
 # Đảm bảo dùng SPAWN cho CUDA
 if multiprocessing.get_start_method(allow_none=True) is None:
     multiprocessing.set_start_method("spawn")
 
+def _run_single_episode(ep_df, model, target_return, config):
+    """Hàm worker để chạy 1 episode đơn lẻ (Dùng cho song song hóa)"""
+    # Mỗi worker cần bộ nén và history riêng biệt để không bị loạn
+    wrapped_dt = model.as_stateful_wrapper(
+        target_return=target_return,
+        action_sampler=d3rlpy.algos.GreedyTransformerActionSampler()
+    )
+    
+    env = CharityGasEnv(ep_df, config, mins=None, maxs=None)
+    obs, _ = env.reset()
+    done = False
+    ep_cost = 0.0
+    last_reward = 0.0
+    deadline_penalty = getattr(config, "deadline_penalty", 500)
+
+    while not done:
+        # AI nhận reward đã được biến đổi Log
+        action = wrapped_dt.predict(obs, log_transform_reward(last_reward))
+        
+        # Step
+        obs, reward, terminated, truncated, info = env.step(action)
+        ep_cost += info.get("cost", 0.0)
+        last_reward = float(reward)
+        done = terminated or truncated
+        
+    is_miss = info.get("deadline_miss", False)
+    if is_miss:
+        ep_cost += env.queue_size * deadline_penalty
+        
+    return ep_cost, (1 if is_miss else 0)
+
 def evaluate_policy_dt(ep_list, model, target_return, config):
-    """Giả lập vật lý cho Decision Transformer dùng dữ liệu RAW (để AI tự scale)"""
+    """Giả lập vật lý song song hóa toàn bộ CPU cho DT"""
     all_costs = []
     all_misses = []
     
-    # Lấy penalty từ config
-    deadline_penalty = getattr(config, "deadline_penalty", 500)
+    # Số lượng worker tối ưu (vắt kiệt CPU)
+    max_workers = os.cpu_count() or 1
     
-    for ep_df in ep_list:
-        # Quan trọng: Mỗi episode cần một wrapper mới để reset history
-        # GreedyTransformerActionSampler tự động lấy argmax từ logits và trả về action index
-        wrapped_dt = model.as_stateful_wrapper(
-            target_return=target_return,
-            action_sampler=d3rlpy.algos.GreedyTransformerActionSampler()
-        )
+    print(f"[*] Đang vắt kiệt {max_workers} luồng CPU để giả lập {len(ep_list)} tập đoàn...")
+    
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit toàn bộ episodes vào hàng chờ xử lý
+        futures = [executor.submit(_run_single_episode, ep, model, target_return, config) for ep in ep_list]
         
-        # mins=None, maxs=None để chạy RAW
-        env = CharityGasEnv(ep_df, config, mins=None, maxs=None)
-        obs, _ = env.reset()
-        done = False
-        ep_cost = 0.0
-        last_reward = 0.0
-        
-        while not done:
-            # DT predict tự động cập nhật history và target_return dựa trên reward của bước trước
-            # Đưa obs thô (RAW) trực tiếp vào AI để AI tự dùng scaler nội bộ
-            action = wrapped_dt.predict(obs, float(last_reward))
-            
-            # Step
-            obs, reward, terminated, truncated, info = env.step(action)
-            ep_cost += info.get("cost", 0.0)
-            last_reward = float(reward)
-            
-            done = terminated or truncated
-            
-        # Cập nhật True Cost (V28 logic): Cộng hình phạt lỡ hạn vào chi phí thực tế
-        is_miss = info.get("deadline_miss", False)
-        if is_miss:
-            penalty_total = env.queue_size * deadline_penalty
-            ep_cost += penalty_total
-
-        all_costs.append(ep_cost)
-        all_misses.append(1 if is_miss else 0)
+        # tqdm hiển thị thanh tiến trình nhảy theo thời gian thực
+        for f in tqdm(concurrent.futures.as_completed(futures), total=len(ep_list), desc="Simulating DT"):
+            cost, miss = f.result()
+            all_costs.append(cost)
+            all_misses.append(miss)
         
     return np.mean(all_costs), np.mean(all_misses) * 100
 
@@ -80,7 +102,7 @@ def main():
     parser.add_argument("--models", nargs="+")
     parser.add_argument("--data", type=str, default="Final_Project/Data/transitions_discrete_v28.parquet")
     parser.add_argument("--episodes", type=int, default=10)
-    parser.add_argument("--target", type=float, default=-1300.0) # Mục tiêu phần thưởng tổng (Oracle mốc)
+    parser.add_argument("--target", type=float, default=460.0) # Mốc cao thủ (Top 10% Oracle)
     args = parser.parse_args()
 
     # 1. LOAD SETUP
@@ -91,6 +113,24 @@ def main():
     config = dataclasses.replace(config_base, normalize_state=False)
 
     df = pd.read_parquet(args.data)
+    
+    # === INVERSE NORMALIZATION (Khôi phục vật lý cho Leaderboard - BẮT BUỘC cho RAW MODE) ===
+    try:
+        data_dir = Path(args.data).parent
+        with open(data_dir / "state_norm_params.json", "r") as f:
+            params = json.load(f)
+        mins_phys = np.array(params["mins"])
+        max_maxs = np.array(params["maxs"])
+        
+        from utils.offline_rl.schema import STATE_COLS
+        print(f"[*] Phục hồi vật lý cho dữ liệu đánh giá DT...")
+        for i, col in enumerate(STATE_COLS):
+            if col in df.columns:
+                df[col] = df[col] * (max_maxs[i] - mins_phys[i]) + mins_phys[i]
+        print("✅ Khôi phục RAW DATA thành công.")
+    except Exception as e:
+        print(f"⚠️ Cảnh báo: Không thể phục hồi vật lý ({e}).")
+
     unique_eps = sorted(df['episode_id'].unique())
     test_ids = unique_eps[int(len(unique_eps)*0.9):]
     ep_list = [d.reset_index(drop=True) for _, d in list(df[df['episode_id'].isin(test_ids[:args.episodes])].groupby('episode_id'))]
@@ -108,23 +148,15 @@ def main():
             else:
                 all_model_paths.append(str(p))
 
-    # 3. RUN PARALLEL
+    # 3. RUN EVAL
     if all_model_paths:
-        ram_gb = psutil.virtual_memory().available / 1e9
-        # DT nặng hơn MLP, cần nhiều RAM hơn (~3GB/worker)
-        max_workers = max(1, min(os.cpu_count() or 1, int(ram_gb // 3.0)))
-        
-        print(f"[+] Đang đánh giá {len(all_model_paths)} mô hình DT với Target Return = {args.target}...")
-        
-        with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
-            futures = [executor.submit(_worker_eval_dt, str(p), ep_list, args.target, config) for p in all_model_paths]
-            for future in concurrent.futures.as_completed(futures):
-                res = future.result()
-                if res["error"]:
-                    print(f"❌ Lỗi {res['name']}: {res['error']}")
-                else:
-                    print(f"✅ DT Finish: {res['name']} | Cost: {res['cost']:,.0f} | Miss: {res['miss']:.1f}%")
-                    results.append([res["name"], f"{res['cost']:,.0f}", f"{res['miss']:.1f}%"])
+        for p in all_model_paths:
+            print(f"\n[+] ĐANG ĐÁNH GIÁ: {Path(p).name}")
+            res = _worker_eval_dt(str(p), ep_list, args.target, config)
+            if res["error"]:
+                print(f"❌ Lỗi {res['name']}: {res['error']}")
+            else:
+                results.append([res["name"], f"{res['cost']:,.0f}", f"{res['miss']:.1f}%"])
 
     # 4. PRINT SUMMARY
     print("\n" + "="*60)

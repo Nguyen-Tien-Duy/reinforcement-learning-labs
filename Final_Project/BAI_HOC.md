@@ -176,3 +176,34 @@ Chúng ta phát hiện Oracle để sót hàng (Miss Rate 1.23%) do sự lệch 
   - Giá Gas cực đắt (Đu Đỉnh) $\rightarrow$ Ép công suất Action 0 (Đóng băng).
   - Giá Gas chạm đáy (Local Min) $\rightarrow$ Nhấp nhả lút ga Action 4 (All-in xả kho).
   Đây không phải là tự hủy, mà là nghệ thuật chớp thời cơ và cắt lỗ của một Siêu Trí tuệ tài chính.
+
+---
+
+## 🚀 Kỷ Nguyên Hồi Sinh: Khai Nhãn & Điều Khiển Transformer (V28+)
+*Ngày ghi nhận: 18/04/2026*
+
+### Bài học #10: Lỗi "Mù" Dữ Liệu do Double Normalization
+> [!CAUTION]
+> Một lỗi hệ thống tinh vi khiến AI nhìn thấy thế giới chỉ toàn những con số 0 vô nghĩa.
+
+- **Hiện tượng**: Dù dữ liệu đã chuẩn hóa [0, 1], nhưng bộ `ObservationScaler` trong training lại thực hiện chuẩn hóa thêm một lần nữa. Kết quả là mọi biến động tỷ Gwei của thị trường đều bị nén về mức 0.00000001.
+- **Giải pháp - Inverse Normalization (Khai nhãn)**: 
+  - Khôi phục giá trị vật lý thô (Hàng tỷ Gwei) ngay khi nạp Parquet.
+  - Cho phép AI "nhìn" thấy sự biến động thực tế để ra quyết định chính xác.
+- **Kết quả**: Đưa Policy từ sụp đổ hoàn toàn (Miss Rate 100%) về mức tiệm cận chuyên gia (Miss Rate 5.5%).
+
+### Bài học #11: `--target` - "Nút vặn" tham vọng của Decision Transformer
+> [!IMPORTANT]
+> Khác với BCQ, Decision Transformer học theo mục tiêu (Conditioning on Return).
+
+- **Phát hiện**: Nếu đặt Target quá thấp (số âm lớn), AI sẽ lười biếng và chấp nhận trễ hạn. Nếu đặt Target cao (số dương lớn), AI sẽ trở nên "tham vọng" và bắt chước quỹ đạo của Oracle.
+- **Cơ chế**: AI không học "Cái gì là tốt nhất", mà học "Làm thế nào để đạt được mức điểm X". Tham số `--target` chính là cách chúng ta điều khiển "IQ" của AI mà không cần huấn luyện lại.
+
+### Bài học #12: Sự thức tỉnh về Độ sâu và Trí nhớ (SOTA Architecture)
+- **Thực tế**: Một mô hình nông (3 layers) và trí nhớ ngắn (20 context) chỉ giúp AI đạt được trình độ "Chuyên gia tập sự" (Vẫn còn 40% trễ hạn).
+- **Chìa khóa SOTA**: Để đạt mức Miss Rate 0%, bắt buộc phải sử dụng kiến trúc SOTA:
+  - **10-12 Layers**: Tăng khả năng xử lý các quy luật giá phức tạp.
+  - **Context 64**: Trí nhớ đủ dài để nhận diện xu hướng Gas của cả 1 giờ lịch sử.
+
+---
+*Ghi chú: Thất bại trong thực nghiệm là nền tảng cho sự đột phá trong lý thuyết. Hiểu được tại sao AI sai mới là đỉnh cao của nghiên cứu RL.*

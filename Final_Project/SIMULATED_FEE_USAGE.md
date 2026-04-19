@@ -88,13 +88,20 @@ Check action-state correlations before training:
 ## 4) Train (DiscreteCQL V20)
 
 ```fish
-nohup python Final_Project/code/simple-offline.py \
+nohup ./venv/bin/python Final_Project/code/simple-offline.py \
     --input Final_Project/Data/transitions_discrete_v28.parquet \
     --train-toy \
-    --sample-size 6000000 \
-    --n-steps 500000 \
-    --mode strict > train_BQL_v28.log 2>&1 &
+    --n-steps 100000 \
+    --sample-size 100000 \
+    --save-interval 5000 \
+    --skip-validation \
+    > train_bcq_v28_fix.log 2>&1 &
 ```
+taskset -c 0,1,2,3 ./venv/bin/python Final_Project/visualize/leaderboard_dt_v28.py \
+    --models d3rlpy_logs/DT_V28_20260418_0325_20260418032535/model_100000.d3 \
+    --episodes 50 \
+    --target 600.0
+
 
 > **Hyperparameter rationale:**
 > - `cql-alpha=0.1`: Critical! Default 1.0 is too conservative — AI only picks Action 1 (25%). At 0.1, AI dares to pick Action 3-4 when needed.

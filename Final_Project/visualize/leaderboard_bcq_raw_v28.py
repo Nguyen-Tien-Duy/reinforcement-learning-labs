@@ -9,6 +9,11 @@ import os
 import concurrent.futures
 import multiprocessing
 from pathlib import Path
+import sys
+
+# Tự động thêm đường dẫn để tìm thấy module utils
+sys.path.append(os.path.abspath("Final_Project/code"))
+
 from utils.offline_rl.enviroment import CharityGasEnv
 from utils.offline_rl.config import TransitionBuildConfig
 from tabulate import tabulate
@@ -84,13 +89,34 @@ def main():
     config = dataclasses.replace(config_base, normalize_state=False)
 
     df = pd.read_parquet(args.data)
+    
+    # === INVERSE NORMALIZATION (Khôi phục vật lý cho Leaderboard) ===
+    # Dataset Parquet v28 đã được chuẩn hóa [0, 1]. 
+    # Ta phải khôi phục lại giá trị vật lý để nạp vào model d3rlpy (vốn có scaler nội bộ)
+    try:
+        data_dir = Path(args.data).parent
+        with open(data_dir / "state_norm_params.json", "r") as f:
+            params = json.load(f)
+        mins_phys = np.array(params["mins"])
+        max_maxs = np.array(params["maxs"])
+        
+        from utils.offline_rl.schema import STATE_COLS
+        print(f"[*] Phục hồi vật lý cho dữ liệu đánh giá...")
+        for i, col in enumerate(STATE_COLS):
+            if col in df.columns:
+                df[col] = df[col] * (max_maxs[i] - mins_phys[i]) + mins_phys[i]
+        print("✅ Khôi phục RAW DATA thành công.")
+    except Exception as e:
+        print(f"⚠️ Cảnh báo: Không thể phục hồi vật lý ({e}). Kết quả có thể không chính xác!")
+
     unique_eps = sorted(df['episode_id'].unique())
     test_ids = unique_eps[int(len(unique_eps)*0.9):]
     ep_list = [d.reset_index(drop=True) for _, d in list(df[df['episode_id'].isin(test_ids[:args.episodes])].groupby('episode_id'))]
     del df
 
     # 2. RUN BASELINE ORACLE
-    print(f"[*] Đang chạy Baseline Oracle...")
+    print(f"[*] Đang chạy Baseline Oracle (trên dữ liệu Vật Lý)...")
+    # Oracle luôn đúng trên dữ liệu vật lý nếu environment config đúng
     c_o, m_o = evaluate_policy_raw(ep_list, None, config, is_oracle=True)
     print(f"✅ XONG BASELINE: Oracle | Chi phí: {c_o:,.0f} | Trễ: {m_o:.1f}%")
     
