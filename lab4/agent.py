@@ -8,14 +8,11 @@ from model import QNetwork
 
 # We define Hyperparameters for DQN
 BUFFER_SIZE = int(1e5)
-BATCH_SIZE = 256
+BATCH_SIZE = 64
 GAMMA = 0.99
-LR = 1e-4
+LR = 5e-4
 TAU = 1e-3
-UPDATE_EVERY = 4
-EPS_START = 1.0
-EPS_END = 0.01
-EPS_DECAY = 20
+UPDATE_EVERY = 1
 
 class DQN:
     def __init__(self, state_size, action_size, seed):
@@ -51,8 +48,10 @@ class DQN:
     def learn(self, experiences, gamma):
         states, actions, rewards, next_states, dones = experiences
 
-        # Get Q values for current states
-        Q_target_next = self.qnetwork_target(next_states).max(1)[0].unsqueeze(1).detach()
+        with torch.no_grad():
+            best_action = self.qnetwork_local(next_states).argmax(1).unsqueeze(1)
+            # Get Q values for current states
+            Q_target_next = self.qnetwork_target(next_states).gather(1, best_action)
 
         # Compute the target Q values
         Q_target = rewards + gamma * Q_target_next * (1 - dones)
@@ -66,6 +65,7 @@ class DQN:
         # optimizer
         self.optimizer.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.qnetwork_local.parameters(), 1.0)
         self.optimizer.step()
 
         self.soft_update(self.qnetwork_local, self.qnetwork_target, TAU)
