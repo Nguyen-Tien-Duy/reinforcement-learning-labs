@@ -1,0 +1,3 @@
+[submodule "fundraising-blockchain"]
+	path = fundraising-blockchain
+	url = https://github.com/Nguyen-Tien-Duy/fundraising-blockchain.git

@@ -87,23 +87,9 @@ def build_reward_episode_frame(
     truncated = is_last_step.astype(np.int8)
 
     # 5. DERIVE PHYSICALLY CONSISTENT NEXT_STATE
-    updated_next_states = [None] * len(df)
+    # In V29, we NO LONGER normalize states inside the builder.
+    # We preserve raw physical/mathematical units and let the Model Scaler handle it.
     
-    # Load normalization params ONLY if required by config
-    mins, maxs = None, None
-    if getattr(config, "normalize_state", False):
-        try:
-            norm_path = Path("Data/state_norm_params.json")
-            if not norm_path.exists():
-                 norm_path = Path(__file__).resolve().parent.parent.parent.parent / "Data" / "state_norm_params.json"
-            
-            if norm_path.exists():
-                with open(norm_path, "r") as f:
-                    params = json.load(f)
-                    mins = np.array(params["mins"], dtype=np.float32)
-                    maxs = np.array(params["maxs"], dtype=np.float32)
-        except: pass
-
     Q_IDX, T_IDX = 8, 9
     
     for s_col, ns_col in zip(STATE_COLS, NEXT_STATE_COLS):
@@ -114,14 +100,11 @@ def build_reward_episode_frame(
     for s_col, ns_col in zip(STATE_COLS, NEXT_STATE_COLS):
         df.loc[terminal_mask, ns_col] = df.loc[terminal_mask, s_col]
         
+    # For Terminal States, the Next Queue is what's left after execution
+    # and Next Time is ALWAYS 0.0 (end of episode).
     q_next_terminal = pre_execute_queue[terminal_mask] - executed_volume_proxy[terminal_mask]
     t_next_terminal = 0.0
     
-    if mins is not None and maxs is not None:
-        denom = np.where((maxs - mins) == 0, 1.0, (maxs - mins))
-        q_next_terminal = (q_next_terminal - mins[Q_IDX]) / denom[Q_IDX]
-        t_next_terminal = (t_next_terminal - mins[T_IDX]) / denom[T_IDX]
-        
     df.loc[terminal_mask, NEXT_STATE_COLS[Q_IDX]] = q_next_terminal
     df.loc[terminal_mask, NEXT_STATE_COLS[T_IDX]] = t_next_terminal
 

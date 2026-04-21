@@ -491,23 +491,23 @@ def train_toy_iql(dataframe, args) -> int:
     obs_scaler = MinMaxObservationScaler(minimum=mins, maximum=maxs)
     print(f"[+] Enforcing Strict Observation Scaler with physical bounds.")
 
-    # === ALGORITHM SELECTION ===
-    config = DiscreteBCQConfig(
+    # === ALGORITHM SELECTION: DiscreteCQL (SOTA for Gas Optimization) ===
+    config = DiscreteCQLConfig(
         learning_rate=3e-4,
         batch_size=512,
         gamma=0.99,
-        action_flexibility=0.5, # Tăng tự do (50%) để AI bớt bị gò ép vào Imitator
+        alpha=args.cql_alpha, # Sử dụng giá trị từ lệnh của bạn (0.1)
         encoder_factory=encoder,
         observation_scaler=obs_scaler,
         reward_scaler=StandardRewardScaler(mean=median, std=iqr),
     )
 
-    # Vị trí số 2: DiscreteCQLConfig (Thuật toán cũ)
-    # config = DiscreteCQLConfig(
+    # Backup: DiscreteBCQConfig (Nếu muốn chuyển lại)
+    # config = DiscreteBCQConfig(
     #     learning_rate=3e-4,
     #     batch_size=512,
     #     gamma=0.99,
-    #     alpha=0.1,
+    #     action_flexibility=0.5,
     #     encoder_factory=encoder,
     #     observation_scaler=obs_scaler,
     #     reward_scaler=StandardRewardScaler(mean=median, std=iqr),
@@ -1249,27 +1249,32 @@ def main() -> int:
                 config_hash=config_hash,
             )
             
-            # FINAL Normalization Sweep: Must occur BEFORE saving the file
+            # V29: ALWAYS calculate and save physical bounds, even if normalization is disabled.
+            # The Model Scaler NEEDS these raw bounds to work correctly.
+            from utils.offline_rl.schema import STATE_COLS, NEXT_STATE_COLS
+            
+            state_matrix = dataframe[STATE_COLS].to_numpy(dtype=np.float32)
+            mins = state_matrix.min(axis=0)
+            maxs = state_matrix.max(axis=0)
+            
+            # 1. Save true physical bounds (Crucial for V29 Raw Model Scaler)
+            from pathlib import Path as _Path
+            save_path = _Path(__file__).resolve().parent.parent / "Data" / "state_norm_params.json"
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(save_path, "w") as f:
+                json.dump({"mins": mins.tolist(), "maxs": maxs.tolist()}, f, indent=2)
+            
+            print(f"[+] Physical bounds saved to {save_path.name}. Max Queue: {maxs[8]:.1f}")
+
+            # 2. Apply Normalization to DataFrame ONLY if explicitly requested
             if config.normalize_state:
-                from utils.offline_rl.schema import STATE_COLS, NEXT_STATE_COLS
-                
-                state_matrix = dataframe[STATE_COLS].to_numpy(dtype=np.float32)
-                mins = state_matrix.min(axis=0)
-                maxs = state_matrix.max(axis=0)
-                
-                # 1. Save true physical bounds
-                save_path = Path(__file__).resolve().parent.parent / "Data" / "state_norm_params.json"
-                save_path.parent.mkdir(parents=True, exist_ok=True)
-                with open(save_path, "w") as f:
-                    json.dump({"mins": mins.tolist(), "maxs": maxs.tolist()}, f, indent=2)
-                
-                # 2. Apply Normalization to DataFrame IN-PLACE
                 denom = np.where((maxs - mins) == 0, 1.0, (maxs - mins))
                 dataframe[STATE_COLS] = ((dataframe[STATE_COLS] - mins) / denom).astype(np.float32)
                 if all(c in dataframe.columns for c in NEXT_STATE_COLS):
                     dataframe[NEXT_STATE_COLS] = ((dataframe[NEXT_STATE_COLS] - mins) / denom).astype(np.float32)
-                
-                print(f"[+] FINAL Normalization Sweep complete. True Physical Max Queue saved: {maxs[8]:.1f}")
+                print("[+] Normalization Sweep applied (V28 Legacy Mode).")
+            else:
+                print("[+] Preserving RAW Physical units (V29 Mode).")
                 
             # Now explicitly save the cleanly normalized frame
             if args.output is not None:
@@ -1294,26 +1299,26 @@ def main() -> int:
             return 1
         dataframe = load_transition_dataframe(args.input)
         
-        # === INVERSE NORMALIZATION (Phục hồi vật lý) ===
-        # Do file Parquet v28 đã bị chuẩn hóa sẵn về 0-1, nhưng Scaler của d3rlpy 
-        # lại dùng mins/maxs vật lý thô, nên chúng ta cần nhân ngược lại để AI "sáng mắt".
         try:
             from utils.offline_rl.schema import STATE_COLS
-            from pathlib import Path
+            from pathlib import Path as _Path
             
-            BASE_DIR = Path(__file__).resolve().parent
-            # Gọi trực tiếp hàm nội bộ đã được định nghĩa ở dòng 251
-            mins_phys, maxs_phys = load_normalization_params(BASE_DIR.parent / "Data")
+            # Sử dụng thư mục Data chuẩn của project
+            data_dir_phys = _Path(__file__).resolve().parent.parent / "Data"
+            mins_phys, maxs_phys = load_normalization_params(data_dir_phys)
             
-            print(f"[*] Đang thực hiện Inverse Normalization cho {len(STATE_COLS)} cột tính năng...")
+            print(f"[*] Đang kiểm tra trạng thái dữ liệu cho {len(STATE_COLS)} cột tính năng...")
             for i, col in enumerate(STATE_COLS):
                 if col in dataframe.columns:
-                    # Công thức Inverse: X_raw = X_norm * (Max - Min) + Min
-                    # Vì trong build_state_action chỉ chia cho Max nên ta chỉ cần nhân Max 
-                    # (Hoặc chuẩn nhất là dùng đúng công thức d3rlpy đang kỳ vọng)
-                    dataframe[col] = dataframe[col] * (maxs_phys[i] - mins_phys[i]) + mins_phys[i]
+                    # SAFEGUARD V29: Chỉ thực hiện Inverse nếu dữ liệu thực sự bị nén (Max <= 1.01)
+                    # Nếu Max > 1.01, đây đã là dữ liệu vật lý thô (V29), không được nhân thêm.
+                    if dataframe[col].max() <= 1.01 and dataframe[col].min() >= -1.01:
+                        dataframe[col] = dataframe[col] * (maxs_phys[i] - mins_phys[i]) + mins_phys[i]
+                    else:
+                        if i == 8: # Chỉ log mẫu cho cột Queue để tránh spam
+                            print(f"  > [V29 Detected] Bỏ qua Inverse cho {col} (Max={dataframe[col].max():.1f})")
             
-            print("✅ Phục hồi vật lý THÀNH CÔNG. AI đã có thể nhìn thấy dữ liệu thô.")
+            print("✅ Xử lý hệ quy chiếu hoàn tất.")
         except Exception as e:
             print(f"[!] Cảnh báo Inverse Normalization thất bại: {e}. AI có thể vẫn bị 'mù'.")
 

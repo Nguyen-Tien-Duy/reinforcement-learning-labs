@@ -27,7 +27,7 @@ class TransitionBuildConfig:
     
     # --- ECONOMICS & URGENCY ---
     gas_reference_window: int = 128
-    normalize_state: bool = True        # Forced TRUE for strict pipeline
+    normalize_state: bool = False        # Forced TRUE for strict pipeline
     urgency_alpha: float = 3.0          # Exponential curve steepness
     urgency_beta: float = 0.0005          # V25: Certified Smart++ Optimal Urgency
     reward_scale: float = 1.0           # Baseline scale (Alpha handling in Model)

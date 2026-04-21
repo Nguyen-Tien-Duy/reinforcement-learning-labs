@@ -245,3 +245,31 @@ Before submitting results, verify ALL of these:
 - [ ] Training loss is stable (not diverging)
 - [ ] Evaluation uses **exact same** physics params as build
 - [ ] Miss rate < 1.0 on at least some checkpoints
+
+---
+
+## 11) Top Performance Models (0.0% Miss Rate - Screening Test)
+
+Dưới đây là danh sách các model đạt độ ổn định tuyệt đối (0% Miss Rate) trong đợt screening nhanh (10 episodes). 
+
+| Thuật toán | Đường dẫn Model | Chi phí (Cost) |
+| :--- | :--- | :--- |
+| **BCQ** | `d3rlpy_logs/DiscreteBCQ_V6_20260420_2213_20260420221342/model_10000.d3` | 144,364 |
+| **BCQ** | `d3rlpy_logs/DiscreteBCQ_V6_20260420_2213_20260420221342/model_20000.d3` | 144,384 |
+| **BCQ** | `d3rlpy_logs/DiscreteBCQ_V6_20260420_2213_20260420221342/model_30000.d3` | 144,601 |
+| **BCQ** | `d3rlpy_logs/DiscreteBCQ_V6_20260420_2213_20260420221342/model_40000.d3` | 145,154 |
+| **BCQ** | `d3rlpy_logs/DiscreteBCQ_V6_20260420_2213_20260420221342/model_50000.d3` | 145,369 |
+| **CQL** | `d3rlpy_logs/DiscreteCQL_V6_20260420_2345_20260420234508/model_20000.d3` | 144,602 |
+| **CQL** | `d3rlpy_logs/DiscreteCQL_V6_20260420_2345_20260420234508/model_30000.d3` | 144,787 |
+| **CQL** | `d3rlpy_logs/DiscreteCQL_V6_20260420_2345_20260420234508/model_40000.d3` | 144,883 |
+| **CQL** | `d3rlpy_logs/DiscreteCQL_V6_20260420_2345_20260420234508/model_50000.d3` | 144,405 |
+| **CQL** | `d3rlpy_logs/DiscreteCQL_V6_20260420_2345_20260420234508/model_60000.d3` | 144,188 |
+| **CQL** | `d3rlpy_logs/DiscreteCQL_V6_20260420_2345_20260420234508/model_70000.d3` | 144,056 |
+| **CQL** | `d3rlpy_logs/DiscreteCQL_V6_20260420_2345_20260420234508/model_80000.d3` | 143,678 |
+| **CQL** | `d3rlpy_logs/DiscreteCQL_V6_20260420_2345_20260420234508/model_90000.d3` | 143,025 |
+| **CQL** | `d3rlpy_logs/DiscreteCQL_V6_20260420_2345_20260420234508/model_100000.d3` | 141,177 |
+| **CQL** | `d3rlpy_logs/DiscreteCQL_V6_20260420_2345_20260420234508/model_110000.d3` | 138,929 |
+| **CQL** | `d3rlpy_logs/DiscreteCQL_V6_20260420_2345_20260420234508/model_120000.d3` | 133,439 |
+| **CQL** | `d3rlpy_logs/DiscreteCQL_V6_20260420_2345_20260420234508/model_130000.d3` | 127,941 |
+
+> **Ghi chú:** CQL cho thấy sự ổn định vượt trội và chi phí tối ưu hơn hẳn so với BCQ ở các giai đoạn sau của quá trình training.

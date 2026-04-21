@@ -47,7 +47,8 @@ def evaluate_policy_raw(ep_list, algo, config, is_oracle=False):
             else:
                 # Đưa về (1, 11) để dự đoán batch của 1
                 # d3rlpy algo.predict tự động xử lý observation_scaler nếu có
-                res = algo.predict(obs.reshape(1, -1))
+                with torch.no_grad():
+                    res = algo.predict(obs.reshape(1, -1))
                 action = res.item() if hasattr(res, 'item') else res
                 
             obs, reward, terminated, truncated, info = env.step(action)
@@ -71,9 +72,14 @@ def _worker_eval_model(m_path, ep_list, config):
         # Load d3rlpy model
         algo = d3rlpy.load_learnable(m_path, device=device)
         cost, miss = evaluate_policy_raw(ep_list, algo, config, is_oracle=False)
-        return {"name": Path(m_path).name, "cost": cost, "miss": miss, "error": None}
+
+        path_obj = Path(m_path) 
+        display_name = f"{path_obj.parent.name} -> {path_obj.name}"
+        return {"name": display_name, "cost": cost, "miss": miss, "error": None}
     except Exception as e:
-        return {"name": Path(m_path).name, "cost": 0, "miss": 0, "error": str(e)}
+        path_obj = Path(m_path) 
+        display_name = f"{path_obj.parent.name} -> {path_obj.name}"
+        return {"name": display_name, "cost": 0, "miss": 0, "error": str(e)}
 
 def main():
     parser = argparse.ArgumentParser()
@@ -147,7 +153,7 @@ def main():
                     print(f"❌ Lỗi {res['name']}: {res['error']}")
                 else:
                     eff = (expert_cost / res["cost"] * 100) if res["cost"] > 0 else 0
-                    print(f"✅ Finish: {res['name']} | Cost: {res['cost']:,.0f} | Trễ: {res['miss']:.1f}%")
+                    print(f"✅ Finish: {res['name']} | Cost: {res['cost']:,.0f} | Trễ: {res['miss']:.1f}%", flush=True)
                     results.append([res["name"], f"{res['cost']:,.0f}", f"{res['miss']:.1f}%"])
 
     # 5. PRINT SUMMARY
