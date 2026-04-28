@@ -41,15 +41,17 @@ def evaluate_policy_raw(ep_list, algo, config, is_oracle=False):
         done = False
         ep_cost = 0.0
         
+        # [SOTA] Pre-allocate observation buffer for faster inference
+        # Đưa về (1, 11) và đảm bảo liên tục trong bộ nhớ (Memory Alignment)
         while not done:
             if is_oracle:
                 action = env.expert_actions[min(env.current_step, len(env.expert_actions)-1)]
             else:
-                # Đưa về (1, 11) để dự đoán batch của 1
-                # d3rlpy algo.predict tự động xử lý observation_scaler nếu có
+                # Đảm bảo C-contiguous để CPU cache prefetcher hoạt động tốt nhất
+                obs_contiguous = np.ascontiguousarray(obs.reshape(1, -1), dtype=np.float32)
                 with torch.no_grad():
-                    res = algo.predict(obs.reshape(1, -1))
-                action = res.item() if hasattr(res, 'item') else res
+                    res = algo.predict(obs_contiguous)
+                action = int(res[0])
                 
             obs, reward, terminated, truncated, info = env.step(action)
             ep_cost += info.get("cost", 0.0)
@@ -85,8 +87,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--models", nargs="+")
     parser.add_argument("--data", type=str, default="Final_Project/Data/transitions_discrete_v28.parquet")
-    parser.add_argument("--episodes", type=int, default=10)
+    parser.add_argument("--episodes", type=int, default=0, help="Số episode đánh giá (0 = toàn bộ tập 20% test)")
     args = parser.parse_args()
+
+    # [SOTA] Đảm bảo log được ghi ra file ngay lập tức
+    import sys
+    sys.stdout.reconfigure(line_buffering=True)
 
     # 1. LOAD SETUP
     print(f"[*] Đang nạp dữ liệu cho BCQ Leaderboard (RAW MODE)...")
@@ -107,17 +113,33 @@ def main():
         max_maxs = np.array(params["maxs"])
         
         from utils.offline_rl.schema import STATE_COLS
-        print(f"[*] Phục hồi vật lý cho dữ liệu đánh giá...")
+        print(f"[*] Kiểm tra và phục hồi vật lý cho dữ liệu đánh giá...")
         for i, col in enumerate(STATE_COLS):
             if col in df.columns:
-                df[col] = df[col] * (max_maxs[i] - mins_phys[i]) + mins_phys[i]
-        print("✅ Khôi phục RAW DATA thành công.")
+                # Chỉ khôi phục nếu dữ liệu đang ở dạng chuẩn hóa [0, 1]
+                # Nếu Max > 1.0 thì khả năng cao đã là dữ liệu vật lý (RAW)
+                if df[col].max() <= 1.01:
+                    df[col] = df[col] * (max_maxs[i] - mins_phys[i]) + mins_phys[i]
+                else:
+                    if i == 0: # Chỉ in log cho cột đầu tiên để tránh spam
+                        print(f"  > Dữ liệu '{col}' có vẻ đã là RAW (Max={df[col].max():.2f}), bỏ qua khôi phục.")
+        print("✅ Xử lý RAW DATA hoàn tất.")
     except Exception as e:
         print(f"⚠️ Cảnh báo: Không thể phục hồi vật lý ({e}). Kết quả có thể không chính xác!")
 
     unique_eps = sorted(df['episode_id'].unique())
-    test_ids = unique_eps[int(len(unique_eps)*0.9):]
-    ep_list = [d.reset_index(drop=True) for _, d in list(df[df['episode_id'].isin(test_ids[:args.episodes])].groupby('episode_id'))]
+    # [SOTA] Lấy 20% dữ liệu cuối cùng làm tập Test
+    split_idx = int(len(unique_eps) * 0.8)
+    test_ids = unique_eps[split_idx:]
+    
+    # Nếu episodes = 0, lấy toàn bộ tập test
+    num_to_eval = args.episodes if args.episodes > 0 else len(test_ids)
+    selected_ids = test_ids[:num_to_eval]
+    
+    print(f"[*] Tổng số episodes Test (20%): {len(test_ids)}. Sẽ đánh giá trên {num_to_eval} episodes. Danh sách Episode ID:")
+    print(f"    {selected_ids}")
+
+    ep_list = [d.reset_index(drop=True) for _, d in list(df[df['episode_id'].isin(selected_ids)].groupby('episode_id'))]
     del df
 
     # 2. RUN BASELINE ORACLE

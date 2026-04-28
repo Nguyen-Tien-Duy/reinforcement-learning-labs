@@ -1,0 +1,70 @@
+\section{Mục tiêu bài Lab 4}
+Lab 4 tập trung vào việc triển khai và tối ưu hóa thuật toán Deep Q-Network (DQN) - một cột mốc quan trọng trong Deep Reinforcement Learning:
+\begin{itemize}
+    \item Hiểu cách sử dụng Neural Network để xấp xỉ hàm Q (Function Approximation).
+    \item Triển khai cơ chế Experience Replay để xóa bỏ sự tương quan giữa các mẫu dữ liệu.
+    \item Sử dụng Target Network để ổn định quá trình tối ưu hóa mục tiêu Bellman.
+    \item Nắm vững các kỹ thuật ổn định training như Soft Update và Double DQN.
+\end{itemize}
+
+\section{Thiết lập và Cài đặt}
+
+\subsection{4.1 Q-function Approximation với Neural Network}
+Thay vì lưu trữ Q-table, chúng ta sử dụng một mạng Neural (MLP) với kiến trúc:
+\begin{itemize}
+    \item \textbf{Input:} Vector trạng thái 4 chiều (CartPole-v1).
+    \item \textbf{Hidden Layers:} 2 lớp ẩn, mỗi lớp 128 units, sử dụng hàm kích hoạt ReLU.
+    \item \textbf{Output:} 2 nodes tương ứng với giá trị Q của các hành động (Trái/Phải).
+\end{itemize}
+
+\textbf{Trả lời câu hỏi lý thuyết:}
+\begin{enumerate}
+    \item \textbf{Tại sao Q-table không dùng được cho state liên tục?} Vì số lượng trạng thái là vô hạn, không thể biểu diễn bằng một bảng hữu hạn. Ngoài ra, Q-table không thể "tổng quát hóa" kiến thức từ trạng thái này sang trạng thái lân cận.
+    \item \textbf{Function Approximation là gì?} Là việc sử dụng một hàm số có tham số (như mạng Neural) để xấp xỉ giá trị của một hàm số phức tạp (hàm Q). Thay vì lưu từng giá trị đơn lẻ, ta chỉ cần lưu bộ trọng thố $\theta$.
+    \item \textbf{Tại sao Output layer = số action?} Để trong một lần forward pass, mạng có thể dự đoán đồng thời giá trị Q cho tất cả các hành động khả thi, giúp việc chọn hành động ($\text{argmax}$) hiệu quả hơn.
+    \item \textbf{Vai trò của ReLU?} ReLU giúp mạng học được các mối quan hệ phi tuyến tính phức tạp giữa trạng thái và giá trị Q, điều mà các hàm tuyến tính không làm được.
+    \item \textbf{Neural Network giúp Generalize như thế nào?} Các trạng thái gần nhau trong không gian vector sẽ kích hoạt các neuron tương tự nhau, dẫn đến đầu ra Q-value tương tự. Do đó, Agent có thể đưa ra quyết định hợp lý cho cả những trạng thái nó chưa từng gặp trực tiếp.
+\end{enumerate}
+
+\subsection{4.2 Deep Q-Learning và Target Network}
+Thuật toán DQN cập nhật trọng số dựa trên cực tiểu hóa hàm Loss:
+\begin{equation}
+    L = \mathbb{E} \left[ (r + \gamma \max_{a'} Q_{target}(s', a') - Q_{local}(s, a))^2 \right]
+\end{equation}
+
+\textbf{Trả lời câu hỏi lý thuyết:}
+\begin{enumerate}
+    \item \textbf{Tại sao target dùng max Q(s', a)?} Dựa trên phương trình Bellman tối ưu, khẳng định rằng giá trị của trạng thái hiện tại bằng phần thưởng tức thời cộng với giá trị kỳ vọng tốt nhất từ trạng thái kế tiếp.
+    \item \textbf{Bootstrapping trong DQN là gì?} Là việc sử dụng dự đoán của chính mạng Neural ở tương lai ($Q(s', a')$) để cập nhật giá trị hiện tại.
+    \item \textbf{Nếu target thay đổi liên tục?} Quá trình học sẽ cực kỳ mất ổn định (hiện tượng "đuổi theo mục tiêu di động"). Target Network giúp cố định mục tiêu này trong một khoảng thời gian để mạng Local có thể hội tụ.
+    \item \textbf{So sánh với Q-learning (tabular):} DQN có khả năng xử lý không gian trạng thái khổng lồ và khả năng tổng quát hóa, trong khi Tabular Q-learning chỉ hoạt động tốt trên các môi trường rất nhỏ và rời rạc.
+\end{enumerate}
+
+\subsection{4.3 Experience Replay}
+Cơ chế Experience Replay lưu trữ bộ $(s, a, r, s', done)$ vào một Buffer và lấy mẫu ngẫu nhiên (Mini-batch) để huấn luyện.
+
+\textbf{Trả lời câu hỏi lý thuyết:}
+\begin{enumerate}
+    \item \textbf{Tại sao không train trực tiếp từng bước?} Vì các trải nghiệm kế tiếp nhau trong một episode có sự tương quan (correlation) rất cao, vi phạm giả định dữ liệu độc lập (i.i.d) của các thuật toán tối ưu hóa dựa trên Gradient.
+    \item \textbf{Correlation trong RL là gì?} Là việc trạng thái $s_{t+1}$ phụ thuộc trực tiếp vào $s_t$. Nếu huấn luyện tuần tự, mạng sẽ bị "bias" theo các trạng thái gần đây và dễ quên các kiến thức cũ.
+    \item \textbf{Replay Buffer giúp gì cho hội tụ?} Nó phá vỡ sự tương quan bằng cách trộn lẫn các trải nghiệm từ các episode và thời điểm khác nhau, giúp gradient update ổn định và khách quan hơn.
+    \item \textbf{Buffer size ảnh hưởng thế nào?} Nếu quá nhỏ, mạng vẫn bị tương quan cao. Nếu quá lớn, Agent có thể học từ các dữ liệu quá cũ (lỗi thời) của các chính sách (policy) trước đó.
+\end{enumerate}
+
+\section{Kết quả thực nghiệm và Phân tích}
+Trong bài Lab này, chúng ta đã triển khai **Double DQN** kết hợp với **Soft Update** ($\tau = 0.001$). Kết quả cho thấy Agent đạt mức điểm tối đa 500/500 chỉ sau khoảng 400-600 episodes.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{Images/Lab4/deepRL-reward.pdf}
+    \caption{Learning Curve của DQN trên môi trường CartPole-v1}
+    \label{fig:lab4_reward}
+\end{figure}
+
+\textbf{Trả lời câu hỏi phân tích:}
+\begin{enumerate}
+    \item \textbf{Khi nào model học tốt (loss)?} Khi hàm Loss giảm dần và dao động quanh một giá trị thấp, đồng thời xu hướng chung của Reward là tăng lên. Lưu ý: Loss trong RL không phản ánh trực tiếp chất lượng Policy như trong Supervised Learning.
+    \item \textbf{Khi nào agent đạt policy tốt (reward)?} Khi đường Reward trung bình tiệm cận mức trần của môi trường (500 điểm) và duy trì ổn định qua nhiều episodes.
+    \item \textbf{Tại sao Deep RL khó ổn định hơn Tabular?} Do sự kết hợp giữa: Bootstrapping (dùng ước lượng để học), Function Approximation (thay đổi một trọng số ảnh hưởng đến nhiều trạng thái) và Off-policy (dữ liệu học khác với policy hiện tại). Đây gọi là "The Deadly Triad".
+    \item \textbf{Overestimation Bias là gì?} Là hiện tượng toán tử $\max$ trong DQN có xu hướng chọn các giá trị Q bị ước lượng quá cao do nhiễu. Điều này đã được chúng ta khắc phục bằng kỹ thuật \textbf{Double DQN} (dùng mạng Local để chọn hành động và mạng Target để định giá).
+\end{enumerate}

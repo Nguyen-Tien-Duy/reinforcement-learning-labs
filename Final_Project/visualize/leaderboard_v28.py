@@ -9,6 +9,12 @@ import os
 import concurrent.futures
 import multiprocessing
 from pathlib import Path
+import sys
+import os
+
+# [PATH FIX] Thêm đường dẫn tới thư mục code để Python tìm thấy module utils
+sys.path.append(os.path.abspath("Final_Project/code"))
+
 from utils.offline_rl.enviroment import CharityGasEnv
 from utils.offline_rl.config import TransitionBuildConfig
 from tabulate import tabulate
@@ -17,13 +23,16 @@ from tabulate import tabulate
 if multiprocessing.get_start_method(allow_none=True) is None:
     multiprocessing.set_start_method("spawn")
 
-def evaluate_policy(ep_list, policy_func, config, mins, maxs, is_oracle=False):
+def evaluate_policy(ep_list, policy_func, config, mins, maxs, is_oracle=False, model_name=""):
     """Giả lập vật lý - Đã được tối ưu tốc độ"""
     all_costs = []
     all_misses = []
     
-    for ep_df in ep_list:
-        env = CharityGasEnv(ep_df, config, mins=mins, maxs=maxs)
+    for i, ep_df in enumerate(ep_list):
+        # [SOTA FIX] Tắt chuẩn hóa ở environment để tránh Nén Kép (Double Compression)
+        # Vì model d3rlpy đã có Observation Scaler nội bộ
+        env = CharityGasEnv(ep_df, config, mins=None, maxs=None)
+        
         # Hack tốc độ: Gán trực tiếp actions nếu là Oracle
         if is_oracle:
             env.expert_actions = ep_df["action"].to_numpy().astype(int)
@@ -33,13 +42,16 @@ def evaluate_policy(ep_list, policy_func, config, mins, maxs, is_oracle=False):
         ep_cost = 0.0
         ep_miss = False
         
+        # [SOTA SPEED] Memory Alignment cho Inference
         while not done:
             if is_oracle:
                 action = env.expert_actions[min(env.current_step, len(env.expert_actions)-1)]
             else:
-                # Đưa về (1, 11) để dự đoán batch của 1
-                res = policy_func(obs.reshape(1, -1))
-                action = res.item() if hasattr(res, 'item') else res
+                # Ép về C-contiguous để CPU prefetch nhanh nhất
+                obs_contiguous = np.ascontiguousarray(obs.reshape(1, -1), dtype=np.float32)
+                res = policy_func(obs_contiguous)
+                # Xử lý cả trường hợp trả về mảng (d3rlpy) hoặc trả về số nguyên (baseline)
+                action = int(res[0] if isinstance(res, (list, np.ndarray)) else res)
                 
             obs, reward, terminated, truncated, info = env.step(action)
             ep_cost += info.get("cost", 0.0)
@@ -56,6 +68,11 @@ def evaluate_policy(ep_list, policy_func, config, mins, maxs, is_oracle=False):
         all_costs.append(ep_cost)
         all_misses.append(1 if ep_miss else 0)
         
+        # Báo cáo tiến độ liên tục ra log (Mỗi 30 episodes báo 1 lần)
+        if (i + 1) % 30 == 0 or (i + 1) == len(ep_list):
+            name_str = model_name if model_name else ("Oracle" if is_oracle else "Baseline")
+            print(f"  ⏳ [{name_str}] Tiến độ: {i+1}/{len(ep_list)} episodes...", flush=True)
+            
     return np.mean(all_costs), np.mean(all_misses) * 100
 
 def _worker_eval_model(m_path, ep_list, config, mins, maxs):
@@ -63,7 +80,8 @@ def _worker_eval_model(m_path, ep_list, config, mins, maxs):
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
     try:
         model = d3rlpy.load_learnable(m_path, device=device)
-        cost, miss = evaluate_policy(ep_list, model.predict, config, mins, maxs)
+        model_name = Path(m_path).name
+        cost, miss = evaluate_policy(ep_list, model.predict, config, mins, maxs, model_name=model_name)
         return {"name": Path(m_path).name, "cost": cost, "miss": miss, "error": None}
     except Exception as e:
         return {"name": Path(m_path).name, "cost": 0, "miss": 0, "error": str(e)}
@@ -84,10 +102,28 @@ def main():
         mins, maxs = np.array(norm_data["mins"]), np.array(norm_data["maxs"])
 
     df = pd.read_parquet(args.data)
+    
+    # [ROBUSTNESS] Kiểm tra và khôi phục vật lý nếu data đang bị chuẩn hóa [0, 1]
+    for i, col in enumerate(["s_queue", "s_base_fee"]): # Kiểm tra đại diện 2 cột
+        if col in df.columns and df[col].max() <= 1.01:
+            print(f"[!] Phát hiện dữ liệu đang ở dạng chuẩn hóa. Tiến hành khôi phục RAW...")
+            from utils.offline_rl.schema import STATE_COLS
+            for j, c in enumerate(STATE_COLS):
+                if c in df.columns:
+                    df[c] = df[c] * (maxs[j] - mins[j]) + mins[j]
+            break
+
     unique_eps = sorted(df['episode_id'].unique())
-    test_ids = unique_eps[int(len(unique_eps)*0.9):]
+    # ✅ CHÍNH XÁC: Lấy 20% Episodes cuối cùng (Theo thời gian thực tế)
+    test_ids = unique_eps[int(len(unique_eps)*0.8):]
+    selected_ids = test_ids[:args.episodes]
+    
+    print(f"[*] Đã trích xuất {len(test_ids)} episodes cho tập Test (20% cuối).")
+    print(f"[*] Sẽ đánh giá trên {len(selected_ids)} episodes. Danh sách Episode ID:")
+    print(f"    {selected_ids}")
+    
     # Chỉ bốc đúng số lượng episode cần test để tiết kiệm RAM
-    ep_list = [d.reset_index(drop=True) for _, d in list(df[df['episode_id'].isin(test_ids[:args.episodes])].groupby('episode_id'))]
+    ep_list = [d.reset_index(drop=True) for _, d in list(df[df['episode_id'].isin(selected_ids)].groupby('episode_id'))]
     del df # Xóa dataframe gốc để giải phóng RAM
 
     results = []

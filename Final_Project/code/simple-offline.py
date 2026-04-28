@@ -105,8 +105,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model-path",
         type=Path,
+        nargs="+",
         default=None,
-        help="Path to a trained d3rlpy model (.d3) for RL policy evaluation",
+        help="Path(s) to trained d3rlpy model(s) (.d3) or a directory for RL policy evaluation",
     )
     parser.add_argument(
         "--eval-ratio",
@@ -214,6 +215,25 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=0.4,
         help="Tỷ lệ episodes Expert - 100%% Oracle DP (V28 Episode-Level)",
+    )
+    parser.add_argument(
+        "--algo",
+        type=str,
+        default="cql",
+        choices=["cql", "iql", "bcq", "sac"],
+        help="Thuật toán Offline RL sử dụng (mặc định: cql)",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=512,
+        help="Batch size cho quá trình huấn luyện",
+    )
+    parser.add_argument(
+        "--eval-interval",
+        type=int,
+        default=10000,
+        help="Số bước huấn luyện giữa mỗi lần chạy Evaluation Simulation",
     )
     parser.add_argument(
         "--medium-ratio",
@@ -375,11 +395,35 @@ class BellmanLoggingCallback:
             gc.collect()
 
 def train_toy_iql(dataframe, args) -> int:
+    import gc
+    from utils.offline_rl.schema import STATE_COLS, NEXT_STATE_COLS
+    
+    # 0. RAM Optimization: Drop unnecessary columns immediately
+    essential_cols = [
+        "episode_id", "timestamp", "reward", "done", "action", "policy_type"
+    ] + STATE_COLS
+    if all(c in dataframe.columns for c in NEXT_STATE_COLS):
+        essential_cols += NEXT_STATE_COLS
+    
+    # Giữ lại các cột phục vụ Simulation nếu cần
+    simulation_cols = ["gas_t", "gas_reference", "transaction_count", "time_to_deadline", "queue_size"]
+    essential_cols = list(set(essential_cols + simulation_cols))
+    essential_cols = [c for c in essential_cols if c in dataframe.columns]
+    
+    dataframe = dataframe[essential_cols].copy()
+    
+    # 0b. Downcast to float32 to save 50% RAM
+    float_cols = dataframe.select_dtypes(include=['float64']).columns
+    dataframe[float_cols] = dataframe[float_cols].astype('float32')
+    dataframe['action'] = dataframe['action'].astype('int8')
+    gc.collect()
+    print(f"[♻️] RAM Optimized: Dropped {len(dataframe.columns) - len(essential_cols)} columns and downcasted to float32.")
+
     # Step A: remove evaluation data from training data
     eval_df = _time_holdout_split(dataframe, args.eval_ratio)
     # Step B: get old data to train
     train_df = dataframe[~dataframe.index.isin(eval_df.index)].copy()
-    
+
     if args.oracle_only:
         if "policy_type" in train_df.columns:
             n_before = len(train_df)
@@ -451,7 +495,7 @@ def train_toy_iql(dataframe, args) -> int:
     # 4) Chia tập Train/Eval THEO THỜI GIAN (Đảm bảo đồng nhất với Cloud)
     # Quy tắc: Học quá khứ, thi tương lai (10% cuối cùng)
     unique_episodes = sorted(dataframe["episode_id"].unique())
-    split_idx = int(len(unique_episodes) * 0.9)
+    split_idx = int(len(unique_episodes) * 0.8)
     train_ids = unique_episodes[:split_idx]
     eval_ids = unique_episodes[split_idx:]
     
@@ -463,11 +507,15 @@ def train_toy_iql(dataframe, args) -> int:
     train_dataset = build_d3rlpy_dataset(train_df, mode=args.mode)
     eval_dataset = build_d3rlpy_dataset(eval_df, mode=args.mode)
 
-    # [ANTI-OOM] Giải phóng DataFrame gốc và các bản sao sau khi đã convert sang d3rlpy dataset
-    import gc
+    # [ANTI-OOM] GIẢI PHÓNG RAM CHỐT HẠ: Xóa toàn bộ DataFrame sau khi đã nạp vào d3rlpy
+    print("[♻️] Quá trình xử lý dữ liệu hoàn tất. Giải phóng RAM đại bản doanh...")
+    del dataframe
     del train_df
+    if args.skip_validation:
+        del eval_df
+        del eval_dataset
     gc.collect()
-    print("[♻️] Đã dọn rác train_df để giải phóng RAM.")
+    print("[♻️] RAM đã được tối ưu hóa. Bắt đầu khởi tạo Model.")
 
     # Verify: Double-check reward and observation ranges
     sample_ep = train_dataset.episodes[0]
@@ -491,27 +539,38 @@ def train_toy_iql(dataframe, args) -> int:
     obs_scaler = MinMaxObservationScaler(minimum=mins, maximum=maxs)
     print(f"[+] Enforcing Strict Observation Scaler with physical bounds.")
 
-    # === ALGORITHM SELECTION: DiscreteCQL (SOTA for Gas Optimization) ===
-    config = DiscreteCQLConfig(
-        learning_rate=3e-4,
-        batch_size=512,
-        gamma=0.99,
-        alpha=args.cql_alpha, # Sử dụng giá trị từ lệnh của bạn (0.1)
-        encoder_factory=encoder,
-        observation_scaler=obs_scaler,
-        reward_scaler=StandardRewardScaler(mean=median, std=iqr),
-    )
-
-    # Backup: DiscreteBCQConfig (Nếu muốn chuyển lại)
-    # config = DiscreteBCQConfig(
-    #     learning_rate=3e-4,
-    #     batch_size=512,
-    #     gamma=0.99,
-    #     action_flexibility=0.5,
-    #     encoder_factory=encoder,
-    #     observation_scaler=obs_scaler,
-    #     reward_scaler=StandardRewardScaler(mean=median, std=iqr),
-    # )
+    # === ALGORITHM SELECTION: Dynamic based on --algo ===
+    print(f"[+] Initializing algorithm: {args.algo.upper()}")
+    if args.algo.lower() == "cql":
+        config = DiscreteCQLConfig(
+            learning_rate=3e-4,
+            batch_size=args.batch_size,
+            gamma=0.99,
+            alpha=args.cql_alpha if hasattr(args, 'cql_alpha') else 1.0,
+            encoder_factory=encoder,
+            observation_scaler=obs_scaler,
+            reward_scaler=StandardRewardScaler(mean=median, std=iqr),
+        )
+    elif args.algo.lower() == "bcq":
+        config = DiscreteBCQConfig(
+            learning_rate=3e-4,
+            batch_size=args.batch_size,
+            gamma=0.99,
+            action_flexibility=0.5,
+            encoder_factory=encoder,
+            observation_scaler=obs_scaler,
+            reward_scaler=StandardRewardScaler(mean=median, std=iqr),
+        )
+    else: # Default to IQL if not specified or unknown
+        from d3rlpy.algos import DiscreteIQLConfig
+        config = DiscreteIQLConfig(
+            learning_rate=3e-4,
+            batch_size=args.batch_size,
+            gamma=0.99,
+            encoder_factory=encoder,
+            observation_scaler=obs_scaler,
+            reward_scaler=StandardRewardScaler(mean=median, std=iqr),
+        )
 
     # === DEEP DIAGNOSTICS: QUÉT NỘI NÃO AI TRƯỚC KHI TRAIN ===
     print("\n" + "🔍" * 20)
@@ -560,6 +619,13 @@ def train_toy_iql(dataframe, args) -> int:
             self.num_episodes = num_episodes
 
         def __call__(self, algo, dataset):
+            # [MEMORY SAFEGUARD] Kiểm tra RAM trước khi giả lập
+            import psutil
+            available_ram_gb = psutil.virtual_memory().available / 1e9
+            if available_ram_gb < 1.0: # Ngưỡng nguy hiểm 1GB
+                print(f"\n[⚠️ SKIP EVAL] RAM cực thấp ({available_ram_gb:.2f}GB)! Bỏ qua giả lập để tránh OOM.")
+                return 1.0 # Giả định miss rate tệ nhất để không làm gián đoạn fit()
+
             # Chọn ngẫu nhiên N episodes từ tập eval_df để chạy simulator
             ep_ids = self.eval_df["episode_id"].unique()
             sampled_ids = np.random.choice(ep_ids, min(len(ep_ids), self.num_episodes), replace=False)
@@ -587,6 +653,30 @@ def train_toy_iql(dataframe, args) -> int:
         reward_std=iqr
     )
 
+    # [ANTI-OOM] Tắt Evaluator định kỳ nếu skip_validation=True để tránh tràn RAM khi giả lập
+    # === MEMORY SAFEGUARD: Check RAM before evaluation ===
+    import psutil
+    def get_evaluators(df, args):
+        available_ram_gb = psutil.virtual_memory().available / 1e9
+        if available_ram_gb < 1.5: # Ngưỡng an toàn 1.5GB
+            print(f"\n[⚠️ WARNING] RAM cực thấp ({available_ram_gb:.2f}GB). Bỏ qua Evaluation để bảo vệ tiến trình Train!")
+            return {}
+        
+        print(f"\n[i] RAM khả dụng: {available_ram_gb:.2f}GB. Bắt đầu cấu hình Evaluators...")
+        return {
+            "oracle_match": RobustActionMatchEvaluator(df),
+            "sla_miss_rate": SlaSimulationEvaluator(
+                df, 
+                TransitionBuildConfig(**{k: v for k, v in vars(args).items() if k in TransitionBuildConfig.__dataclass_fields__}), 
+                args, 
+                num_episodes=min(10, args.limit_eval_episodes) # Giới hạn số episode eval nội bộ
+            )
+        }
+
+    fit_evaluators = {}
+    if not args.skip_validation:
+        fit_evaluators = get_evaluators(eval_df, args)
+
     algo.fit(
         train_dataset,
         n_steps=args.n_steps,           
@@ -594,15 +684,7 @@ def train_toy_iql(dataframe, args) -> int:
         show_progress=True,
         experiment_name=run_name,
         callback=bellman_callback,
-        evaluators={
-            "oracle_match": RobustActionMatchEvaluator(eval_df),
-            "sla_miss_rate": SlaSimulationEvaluator(
-                eval_df, 
-                TransitionBuildConfig(**{k: v for k, v in vars(args).items() if k in TransitionBuildConfig.__dataclass_fields__}), 
-                args, 
-                num_episodes=10
-            )
-        }
+        evaluators=fit_evaluators,
     )
 
     print(f"Full training complete. Models saved in d3rlpy_logs/{run_name}")
@@ -748,6 +830,7 @@ def run_evaluation(dataframe: pd.DataFrame, args: argparse.Namespace) -> int:
         print("execution_capacity must be > 0 when provided.")
         return 1
 
+    rows_total_count = int(len(dataframe))
     eval_df = _time_holdout_split(dataframe, args.eval_ratio)
     
     # IMMEDIATE MEMORY OPTIMIZATION 1: Delete massive full dataframe and Force GC
@@ -785,9 +868,36 @@ def run_evaluation(dataframe: pd.DataFrame, args: argparse.Namespace) -> int:
         threshold_action = (gas_values <= threshold).astype(np.int64).to_numpy()
         policies[f"threshold_policy(gas<={threshold:.6g})"] = threshold_action
 
-    if args.evaluate and (args.eval_all or args.eval_watch):
-        if args.model_path is None or not args.model_path.is_dir():
-            print("To evaluate all/watch models, --model-path must be a directory containing .d3 files")
+    # [SOTA] Thêm Oracle Baseline để làm mốc so sánh (Upper Bound)
+    print("[+] Calculating Oracle baseline (Upper Bound) for comparison...")
+    from utils.offline_rl.oracle_builder import apply_oracle_to_episodes
+    from utils.offline_rl.config import TransitionBuildConfig
+    
+    # Tạo config tạm cho Oracle từ args
+    valid_fields = TransitionBuildConfig.__dataclass_fields__.keys()
+    oracle_config_kwargs = {k: v for k, v in vars(args).items() if k in valid_fields}
+    oracle_config_kwargs['gas_to_gwei_scale'] = args.fee_gas_scale
+    if args.execution_capacity is not None:
+        oracle_config_kwargs['execution_capacity'] = args.execution_capacity
+    
+    temp_oracle_config = TransitionBuildConfig(**oracle_config_kwargs)
+    
+    # Chạy Oracle trên bản copy của tập eval
+    oracle_eval_df = apply_oracle_to_episodes(
+        eval_df.copy(), 
+        temp_oracle_config, 
+        expert_ratio=1.0, 
+        medium_ratio=0.0, 
+        random_ratio=0.0
+    )
+    policies["oracle_policy"] = oracle_eval_df["action"].to_numpy(dtype=np.int32)
+    del oracle_eval_df
+    import gc
+    gc.collect()
+
+    if args.evaluate and (args.eval_all or args.eval_watch or (args.model_path and len(args.model_path) > 1)):
+        if args.model_path is None:
+            print("To evaluate models, provide at least one --model-path")
             return 1
             
         import re
@@ -795,31 +905,35 @@ def run_evaluation(dataframe: pd.DataFrame, args: argparse.Namespace) -> int:
         def natural_sort_key(s):
             return [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', str(s))]
 
-        model_files = sorted(list(args.model_path.glob("*.d3")), key=lambda x: natural_sort_key(x.name))
+        # [NEW] Hỗ trợ danh sách file cụ thể
+        model_files = []
+        for p in args.model_path:
+            if p.is_dir():
+                model_files.extend(list(p.glob("*.d3")))
+            elif p.is_file():
+                model_files.append(p)
+        
+        model_files = sorted(list(set(model_files)), key=lambda x: natural_sort_key(x.name))
+        
+        if not model_files:
+            print("No .d3 models found in the provided path(s).")
+            return 1
         
         print(f"[+] Setting up leaderboard evaluation.")
         leaderboard_data = []
         evaluated_files = set()
 
-        sim_config = TransitionBuildConfig(
-            action_col=args.action_col, 
-            queue_col=args.queue_col,
-            history_window=args.history_window,
-            episode_hours=args.episode_hours,
-            action_threshold=args.action_threshold,
-            deadline_penalty=args.deadline_penalty,
-            queue_penalty=0.0,
-            gas_reference_window=args.gas_reference_window,
-            normalize_state= not args.disable_state_normalization,
-            urgency_alpha=args.urgency_alpha,
-            urgency_beta=args.urgency_beta,
-            reward_scale=args.reward_scale,
-            C_base=args.C_base,
-            C_mar=args.C_mar,
-            gas_to_gwei_scale=args.fee_gas_scale,
-            execution_capacity=args.execution_capacity if args.execution_capacity is not None else 500.0,
-            arrival_scale=args.arrival_scale,
-        )
+        # [FIX] Tự động lọc các thôgn số hợp lệ để tránh TypeError
+        valid_fields = TransitionBuildConfig.__dataclass_fields__.keys()
+        config_kwargs = {k: v for k, v in vars(args).items() if k in valid_fields}
+        
+        # Ghi đè một số thôgn số đặc biệt nếu cần thiết cho Simulation
+        config_kwargs['normalize_state'] = not args.disable_state_normalization
+        if args.execution_capacity is not None:
+            config_kwargs['execution_capacity'] = args.execution_capacity
+        config_kwargs['gas_to_gwei_scale'] = args.fee_gas_scale
+
+        sim_config = TransitionBuildConfig(**config_kwargs)
 
         import concurrent.futures
         import multiprocessing
@@ -829,9 +943,18 @@ def run_evaluation(dataframe: pd.DataFrame, args: argparse.Namespace) -> int:
         
         print(f"\n[+] Starting parallel evaluation with {max_workers} processes (using SPAWN to save RAM)...", flush=True)
 
+        def get_current_model_files():
+            m_files = []
+            for p in args.model_path:
+                if p.is_dir():
+                    m_files.extend(list(p.glob("*.d3")))
+                elif p.is_file():
+                    m_files.append(p)
+            return sorted(list(set(m_files)), key=lambda x: natural_sort_key(x.name))
+
         while True:
             # Refresh model list
-            model_files = sorted(list(args.model_path.glob("*.d3")), key=lambda x: natural_sort_key(x.name))
+            model_files = get_current_model_files()
             new_files = [m for m in model_files if m not in evaluated_files]
             
             if not new_files:
@@ -880,8 +1003,9 @@ def run_evaluation(dataframe: pd.DataFrame, args: argparse.Namespace) -> int:
         return 0
 
     if args.model_path is not None:
-        if not args.model_path.exists():
-            print(f"Model file not found: {args.model_path}")
+        target_model = args.model_path[0]
+        if not target_model.exists():
+            print(f"Model file not found: {target_model}")
             return 1
         try:
             import d3rlpy
@@ -891,31 +1015,25 @@ def run_evaluation(dataframe: pd.DataFrame, args: argparse.Namespace) -> int:
 
         from utils.offline_rl.schema import STATE_COLS
         states = eval_df[STATE_COLS].to_numpy(dtype=np.float32)
-        algo = _load_model_iql(args.model_path, eval_df, args.mode)
+        # Lấy file đầu tiên nếu người dùng chỉ đưa 1 file
+        target_model = args.model_path[0]
+        algo = _load_model_iql(target_model, eval_df, args.mode)
         if algo is None: return 1
 
         predicted_action = np.asarray(algo.predict(states)).reshape(-1).astype(np.int32)
         policies["rl_policy"] = predicted_action
 
-        sim_config = TransitionBuildConfig(
-            action_col=args.action_col, 
-            queue_col=args.queue_col,
-            history_window=args.history_window,
-            episode_hours=args.episode_hours,
-            action_threshold=args.action_threshold,
-            deadline_penalty=args.deadline_penalty,
-            queue_penalty=0.0,
-            gas_reference_window=args.gas_reference_window,
-            normalize_state= not args.disable_state_normalization,
-            urgency_alpha=args.urgency_alpha,
-            urgency_beta=args.urgency_beta,
-            reward_scale=args.reward_scale,
-            C_base=args.C_base,
-            C_mar=args.C_mar,
-            gas_to_gwei_scale=args.fee_gas_scale,
-            execution_capacity=args.execution_capacity if args.execution_capacity is not None else 500.0,
-            arrival_scale=args.arrival_scale,
-        )
+        # [FIX] Tự động lọc các thôgn số hợp lệ để tránh TypeError
+        valid_fields = TransitionBuildConfig.__dataclass_fields__.keys()
+        config_kwargs = {k: v for k, v in vars(args).items() if k in valid_fields}
+        
+        # Ghi đè một số thôgn số đặc biệt nếu cần thiết cho Simulation
+        config_kwargs['normalize_state'] = not args.disable_state_normalization
+        if args.execution_capacity is not None:
+            config_kwargs['execution_capacity'] = args.execution_capacity
+        config_kwargs['gas_to_gwei_scale'] = args.fee_gas_scale
+
+        sim_config = TransitionBuildConfig(**config_kwargs)
         # Run simulation with the trained model
         sim_result = simulate_policy(eval_df, algo, sim_config, args)
 
@@ -933,7 +1051,7 @@ def run_evaluation(dataframe: pd.DataFrame, args: argparse.Namespace) -> int:
 
     report = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
-        "rows_total": int(len(dataframe)),
+        "rows_total": rows_total_count,
         "rows_eval": int(len(eval_df)),
         "eval_ratio": float(args.eval_ratio),
         "available_policies": list(results.keys()),
@@ -1217,8 +1335,19 @@ def main() -> int:
     args = parse_args()
 
     # V22: Unified configuration from config.py SSoT
-    # Only override columns if explicitly provided via CLI
-    conf_kwargs = {"normalize_state": not args.disable_state_normalization}
+    # Override defaults if provided via CLI
+    conf_kwargs = {
+        "normalize_state": not args.disable_state_normalization,
+        "history_window": args.history_window,
+        "episode_hours": args.episode_hours,
+        "deadline_penalty": args.deadline_penalty,
+        "urgency_beta": args.urgency_beta,
+        "urgency_alpha": args.urgency_alpha,
+        "C_base": args.C_base,
+        "C_mar": args.C_mar,
+        "gas_reference_window": args.gas_reference_window,
+        "arrival_scale": args.arrival_scale,
+    }
     if args.action_col: conf_kwargs["action_col"] = args.action_col
     if args.queue_col:  conf_kwargs["queue_col"] = args.queue_col
     

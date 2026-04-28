@@ -5,12 +5,11 @@ import sys
 import os
 
 # Parameters cho Discretization
-BINS = [4, 4, 10, 10] # Vị trí, Vận tốc, Góc cột, Vận tốc góc
-# Tổng số states: 4 * 4 * 10 * 10 = 1,600 states
-MIN_VALS = np.array([-4.8, -5.0, -0.418, -5.0])
-MAX_VALS = np.array([4.8, 5.0, 0.418, 5.0])
+BINS = [1, 1, 24, 24] # Vị trí (bỏ qua), Vận tốc (bỏ qua), Góc cột, Vận tốc góc
+# Thu hẹp khoảng giá trị để tập trung vào vùng cân bằng nhạy cảm
+MIN_VALS = np.array([-2.4, -2.0, -0.21, -3.0])
+MAX_VALS = np.array([ 2.4,  2.0,  0.21,  3.0])
 
-# Tổng số states: 1 * 1 * 12 * 12 = 144 states (Cực kỳ dày đặc mẫu!)
 NUM_STATES = np.prod(BINS)
 NUM_ACTIONS = 2 # 0: Trái, 1: Phải
 
@@ -124,9 +123,9 @@ def policy_evaluation(policy, P, R, gamma=0.99, theta=1e-6):
             break
     return V, eval_iters
 
-def policy_iteration(P, R, gamma=0.99, theta=1e-6, min_changes=13):
+def policy_iteration(P, R, gamma=0.99, theta=1e-6, min_changes=20, max_iters=20):
     """ Thuật toán Policy Iteration tìm ra Policy tối ưu """
-    print("Bắt đầu chạy Policy Iteration...")
+    print(f"Bắt đầu chạy Policy Iteration (Max Iters: {max_iters})...")
     policy = np.random.choice(NUM_ACTIONS, size=NUM_STATES)
     iters = 0
     while True:
@@ -152,6 +151,10 @@ def policy_iteration(P, R, gamma=0.99, theta=1e-6, min_changes=13):
         print(f"[PI] Vòng lớn: {iters:2d} | Vòng nhỏ Evaluation: {eval_iters:4d} | Điểm thay đổi Policy: {changes}", flush=True)
         if policy_stable or changes <= min_changes:
             print(f"Policy Iteration dừng sớm với {changes} changes còn lại.", flush=True)
+            break
+            
+        if iters >= max_iters:
+            print(f"Policy Iteration đạt giới hạn {max_iters} vòng lặp. Dừng để tránh vòng lặp vô hạn.", flush=True)
             break
     print(f"Policy Iteration hội tụ sau {iters} vòng lặp.")
     return policy, V
@@ -205,13 +208,29 @@ if __name__ == "__main__":
     
     # 4. Đánh giá và So sánh
     print("\n=== TỔNG KẾT & SO SÁNH ===")
+    # Đánh giá Random Agent
+    start_eval = time.time()
     random_reward = evaluate_policy(env, policy=None)
-    vi_reward = evaluate_policy(env, vi_policy)
-    pi_reward = evaluate_policy(env, pi_policy)
+    random_eval_time = time.time() - start_eval
     
-    print(f" Tốc độ hội tụ thuật toán:")
+    # Đánh giá Value Iteration
+    start_eval = time.time()
+    vi_reward = evaluate_policy(env, vi_policy)
+    vi_eval_time = time.time() - start_eval
+    
+    # Đánh giá Policy Iteration
+    start_eval = time.time()
+    pi_reward = evaluate_policy(env, pi_policy)
+    pi_eval_time = time.time() - start_eval
+    
+    print(f" Tốc độ hội tụ thuật toán (Training):")
     print(f"  - Value Iteration : {vi_time:.4f} giây")
     print(f"  - Policy Iteration: {pi_time:.4f} giây")
+    
+    print(f"\n Thời gian thực thi đánh giá (Evaluation trên 100 episodes):")
+    print(f"  - Random Agent    : {random_eval_time:.4f} giây")
+    print(f"  - Value Iteration : {vi_eval_time:.4f} giây")
+    print(f"  - Policy Iteration: {pi_eval_time:.4f} giây")
     
     print(f"\n Reward trung bình (trên 100 episodes):")
     print(f"  - Random Agent    : {random_reward:.2f}")

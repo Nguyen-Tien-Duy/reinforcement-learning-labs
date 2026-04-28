@@ -20,7 +20,7 @@ Where:
 *   $Q_t \in [0, Q_{max}]$: Current queue length (pending transactions).
 *   $\tau_t \in [0, \mathcal{T}]$: Remaining time until the strict deadline.
 
-The combined state vector is determined by $s_t = M_t \oplus E_t \in \mathbb{R}^8$.
+The combined state vector is determined by $s_t \in \mathbb{R}^{11}$ (incorporating momentum and mempool pressure).
 
 ## 2. Action Space ($\mathcal{A}$)
 

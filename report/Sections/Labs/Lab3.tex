@@ -1,0 +1,96 @@
+\section{Mục tiêu bài Lab 3}
+Mục tiêu của Lab 3 tập trung vào các phương pháp Value-Based Reinforcement Learning nâng cao:
+\begin{itemize}
+    \item Hiểu bản chất của Bootstrapping trong Temporal Difference (TD) Learning.
+    \item Phân biệt và triển khai các biến thể: TD(0), n-step TD, và Monte Carlo.
+    \item Ứng dụng Function Approximation với Neural Network để giải quyết bài toán không gian trạng thái liên tục.
+\end{itemize}
+
+\subsection{3.1 Temporal Difference Learning (TD Learning)}
+\textbf{Mô tả thực nghiệm:}
+Chúng ta triển khai thuật toán TD(0) để học giá trị trạng thái $V(s)$ trên môi trường CartPole-v1. Vì CartPole có không gian liên tục, ta thực hiện rời rạc hóa (discretization) thành 1,600 trạng thái ($4 \times 4 \times 10 \times 10$). Kết quả được so sánh với Monte Carlo Prediction (được chạy 60,000 episodes để làm Ground Truth).
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{Images/Lab3/stability_analysis.png}
+    \caption{Phân tích độ ổn định và lỗi RMSE giữa TD(0) và Monte Carlo}
+    \label{fig:lab3_td}
+\end{figure}
+
+\textbf{Trả lời câu hỏi lý thuyết:}
+\begin{enumerate}
+    \item \textbf{Bootstrapping là gì?} Là việc cập nhật một ước lượng dựa trên các ước lượng khác có sẵn. TD không cần đợi hết episode vì nó sử dụng giá trị ước lượng của trạng thái kế tiếp ($V(s')$) để cập nhật trạng thái hiện tại.
+    \item \textbf{So sánh TD(0) và MC:} MC cập nhật dựa trên tổng phần thưởng thực tế ($G_t$) cuối episode, còn TD cập nhật ngay lập tức sau mỗi bước dựa trên phần thưởng tức thời và giá trị dự đoán tiếp theo ($r + \gamma V(s')$).
+    \item \textbf{Bias và Variance:} TD(0) có \textbf{Bias cao} (do phụ thuộc vào ước lượng ban đầu sai lệch) nhưng \textbf{Variance thấp} (chỉ phụ thuộc vào 1 bước ngẫu nhiên). MC có \textbf{Bias bằng 0} nhưng \textbf{Variance rất cao} (do tích lũy nhiễu từ toàn bộ episode).
+    \item \textbf{Tại sao TD phù hợp online?} Vì nó cập nhật theo từng bước (step-by-step), cho phép Agent học ngay trong khi đang tương tác mà không cần chờ episode kết thúc.
+    \item \textbf{Ý nghĩa công thức TD(0):} $V(s) \leftarrow V(s) + \alpha [r + \gamma V(s') - V(s)]$. Trong đó $\alpha$ là tốc độ học, $r + \gamma V(s')$ là TD Target, và $[...]$ là TD Error.
+    \item \textbf{Hệ quả của Learning rate:} Nếu $\alpha$ quá lớn, giá trị V sẽ dao động và khó hội tụ. Nếu $\alpha$ quá nhỏ, tốc độ học sẽ cực chậm.
+    \item \textbf{Khi $\gamma \to 1$:} Agent sẽ coi trọng các phần thưởng trong tương lai xa tương đương với phần thưởng hiện tại, giá trị trạng thái sẽ lớn hơn và đại diện cho tổng thưởng dài hạn.
+    \item \textbf{Cài đặt V(s) cho CartPole:} Sử dụng kỹ thuật rời rạc hóa (Discretization) để chia các biến liên tục thành các "thùng" (bins), biến mỗi tổ hợp thành một chỉ số trong mảng (Q-table).
+    \item \textbf{Hàm update TD(0):} 
+    \begin{lstlisting}[style=PythonStyle]
+v_td[s_idx] += alpha * (reward + gamma * v_next - v_td[s_idx])
+    \end{lstlisting}
+    Dòng code này tính toán sai số giữa mục tiêu dự đoán ($r + \gamma V'$) và giá trị hiện tại, sau đó điều chỉnh một khoảng $\alpha$ để tiến gần mục tiêu hơn.
+    \item \textbf{Discretize trong CartPole:} Chia 4 chiều quan sát ($x, \dot{x}, \theta, \dot{\theta}$) thành các khoảng cố định bằng `np.digitize` hoặc tính tỉ lệ theo `MIN/MAX\_VALS`.
+    \item \textbf{So sánh tốc độ và ổn định:} TD(0) thường hội tụ nhanh hơn về mặt số lượng bước đi và ổn định hơn MC do phương sai thấp.
+    \item \textbf{Thay đổi sai số:} Khi số episode tăng, RMSE giữa $V(s)$ và giá trị thực giảm dần theo dạng hàm mũ và ổn định tại một mức nhiễu thấp.
+    \item \textbf{Xu hướng Learning Curve:} Đồ thị RMSE (Hình \ref{fig:lab3_td} trái) cho thấy TD(0) giảm lỗi nhanh hơn MC ở giai đoạn đầu.
+    \item \textbf{TD(0) cho action-value?} Có thể, đó chính là thuật toán SARSA hoặc Q-learning.
+    \item \textbf{Vấn đề Sparse Reward:} Nếu phần thưởng hiếm, TD(0) sẽ mất rất nhiều thời gian để "lan truyền" giá trị từ trạng thái kết thúc về các trạng thái ban đầu.
+\end{enumerate}
+
+\subsection{3.2 n-step Q-learning}
+\textbf{Mô tả thực nghiệm:}
+Chúng ta triển khai n-step Q-learning để trung hòa ưu nhược điểm của TD(0) và Monte Carlo. Thí nghiệm thực hiện so sánh giữa $n=1$ (Q-learning thông thường), $n=3$ và $n=5$.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{Images/Lab3/n_step_comparison.png}
+    \caption{So sánh tốc độ học của n-step Q-learning với các giá trị n khác nhau}
+    \label{fig:lab3_nstep}
+\end{figure}
+
+\textbf{Trả lời câu hỏi lý thuyết:}
+\begin{enumerate}
+    \item \textbf{Ý tưởng chính:} Học từ $n$ bước phần thưởng thực tế trước khi thực hiện bootstrapping, giúp giảm bias so với TD(0) và giảm variance so với MC.
+    \item \textbf{Khác biệt return:} TD(0) dùng 1 reward, MC dùng toàn bộ reward, n-step dùng $n$ reward đầu tiên cộng với giá trị ước lượng tại bước $t+n$.
+    \item \textbf{Thay đổi Bias/Variance khi n tăng:} Bias giảm (vì dùng nhiều reward thực hơn) nhưng Variance tăng (tích lũy nhiều nhiễu hơn từ môi trường).
+    \item \textbf{Công thức n-step return:} $G_{t:t+n} = r_{t+1} + \gamma r_{t+2} + ... + \gamma^{n-1} r_{t+n} + \gamma^n \max_{a} Q(s_{t+n}, a)$.
+    \item \textbf{Vai trò max Q:} Đại diện cho giá trị kỳ vọng tốt nhất mà Agent có thể đạt được từ trạng thái thứ $n$ trở đi.
+    \item \textbf{Lan truyền reward nhanh hơn:} Vì mỗi bước cập nhật tác động đến $n$ trạng thái trước đó thay vì chỉ 1, giúp thông tin về Reward đến đích được truyền về nhanh hơn.
+    \item \textbf{Cấu trúc n-step buffer:} Sử dụng một hàng đợi (`deque`) lưu trữ các bộ $(s, a, r)$ có độ dài cố định là $n$.
+    \item \textbf{Xử lý khi episode kết thúc sớm:} Nếu episode kết thúc tại bước $T < t+n$, ta tính n-step return dựa trên các phần thưởng thực tế còn lại và không thực hiện bootstrapping ($\gamma^n \max Q = 0$).
+    \item \textbf{Hàm tính n-step return:} Duyệt qua buffer, nhân mỗi reward với $\gamma^i$ tương ứng.
+    \item \textbf{So sánh n=1, 3, 5:} Thường $n=3$ hoặc $n=5$ cho kết quả tốt nhất (Hình \ref{fig:lab3_nstep}) vì tận dụng được thông tin reward dài hơn mà không bị quá nhiễu.
+    \item \textbf{Khi n quá lớn:} Thuật toán tiến dần về Monte Carlo, dẫn đến variance cực cao và học không ổn định.
+    \item \textbf{So với TD(0):} n-step thường hội tụ nhanh hơn đáng kể trong các môi trường có đường đi dài.
+    \item \textbf{Chọn n:} Chọn $n$ nhỏ cho môi trường rất nhiễu (stochastic), chọn $n$ lớn cho môi trường ổn định hoặc phần thưởng thưa.
+    \item \textbf{Episode dài:} n-step rất phù hợp vì giúp đẩy nhanh tốc độ hội tụ mà không cần chờ đến cuối episode như MC.
+\end{enumerate}
+
+\subsection{3.3 Q-function Approximation với Neural Network}
+\textbf{Mô tả thực nghiệm:}
+Triển khai mạng Neural Network (Deep Q-Network - DQN) sử dụng PyTorch để thay thế Q-table. Chúng ta sử dụng kiến trúc 3 lớp Fully Connected với hàm kích hoạt ReLU, kết hợp Replay Buffer và kỹ thuật Double DQN để ổn định quá trình huấn luyện.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{Images/Lab3/deepRL-reward.pdf}
+    \caption{Đồ thị Reward và Loss của mô hình DQN trên CartPole-v1}
+    \label{fig:lab3_dqn}
+\end{figure}
+
+\textbf{Trả lời câu hỏi lý thuyết:}
+\begin{enumerate}
+    \item \textbf{Tại sao Q-table không phù hợp?} Vì với không gian trạng thái liên tục, số lượng trạng thái là vô hạn, không thể lưu trữ hết vào một bảng. Ngoài ra, Q-table không có khả năng tổng quát hóa (học ở trạng thái này không giúp ích cho trạng thái tương tự).
+    \item \textbf{Ý tưởng Function Approximation:} Thay vì lưu giá trị cho từng ô, ta học một hàm số $Q(s, a; \theta)$ có khả năng dự đoán giá trị Q cho bất kỳ trạng thái nào dựa trên các tham số $\theta$.
+    \item \textbf{Khác biệt Q-table vs Q-network:} Q-table là một mảng tra cứu tĩnh, Q-network là một mô hình toán học có khả năng học các đặc trưng và tổng quát hóa.
+    \item \textbf{Kiến trúc mạng:} Input là vector trạng thái (4 chiều), qua các lớp ẩn (64 nodes) dùng ReLU, Output là giá trị Q của 2 hành động.
+    \item \textbf{Tại sao Output node = số action?} Để trong một lần truyền xuôi (forward pass), mạng có thể tính toán đồng thời giá trị của tất cả các hành động khả thi tại trạng thái đó.
+    \item \textbf{Vai trò ReLU:} Thêm tính phi tuyến (non-linearity) vào mạng, giúp nó xấp xỉ được các hàm số phức tạp thay vì chỉ là các đường thẳng.
+    \item \textbf{Hàm loss:} Sử dụng Mean Squared Error (MSE) giữa giá trị dự đoán hiện tại $Q(s, a)$ và mục tiêu Bellman $r + \gamma \max Q(s', a')$.
+    \item \textbf{Tại sao target có max Q?} Dựa trên phương trình Bellman tối ưu, khẳng định giá trị của trạng thái hiện tại bằng phần thưởng hiện tại cộng với giá trị tốt nhất có thể đạt được ở tương lai.
+    \item \textbf{Target thay đổi quá nhanh:} Dẫn đến hiện tượng đuổi theo mục tiêu di động (moving target), làm quá trình huấn luyện mất ổn định. Để khắc phục, ta dùng Target Network (cập nhật chậm hơn).
+    \item \textbf{Quan sát đồ thị Loss:} Model học tốt khi Loss giảm dần và ổn định ở một mức thấp (Hình \ref{fig:lab3_dqn} phải).
+    \item \textbf{Quan sát Reward:} Agent đạt policy tốt khi đường Reward tăng dần và tiệm cận mức tối đa của môi trường (500 điểm cho CartPole-v1).
+\end{enumerate}

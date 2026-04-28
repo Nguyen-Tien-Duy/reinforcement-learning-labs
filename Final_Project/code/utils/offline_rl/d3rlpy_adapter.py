@@ -43,6 +43,16 @@ def build_d3rlpy_dataset(df: pd.DataFrame, *, mode: ValidationMode = "strict") -
     # 3. Actions: Discrete bin IDs (V6)
     actions = df["action"].to_numpy(dtype=np.int64)
 
+    # [SOTA OPTIMIZATION] Memory Alignment & Contiguity
+    # Giúp giảm L1/LLC Cache Misses bằng cách ép dữ liệu nằm liên tiếp trong RAM
+    observations = np.ascontiguousarray(observations, dtype=np.float32)
+    actions = np.ascontiguousarray(actions.reshape(-1, 1), dtype=np.int64)
+    rewards = np.ascontiguousarray(rewards.reshape(-1, 1), dtype=np.float32)
+    terminals = np.ascontiguousarray(terminals, dtype=np.uint8)
+    timeouts = np.ascontiguousarray(timeouts, dtype=np.uint8)
+
+    print(f"[⚡] Memory Optimized: Arrays are now C-contiguous. Ready to saturate CPU cache.")
+
     return MDPDataset(
         observations=observations,
         actions=actions,

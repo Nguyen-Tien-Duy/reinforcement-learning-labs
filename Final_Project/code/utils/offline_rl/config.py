@@ -6,12 +6,14 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class TransitionBuildConfig:
     # --- CANONICAL PHYSICS (Locked Source of Truth) ---
-    arrival_scale: float = 0.1          # 10% of real traffic to prevent extreme congestion
-    deadline_penalty: float = 500.0     # V24: Certified Smart+ Optimal Penalty
+    arrival_scale: float = 0.1          # 10% of mainnet traffic as per user request
+    deadline_penalty: float = 20000.0     # V24: Certified Smart+ Optimal Penalty
     episode_hours: int = 24             # Fixed 24h window
     history_window: int = 3             # 3-step gas history
     
-    # --- ENVIRONMENT CONSTANTS ---
+    # --- ENVIRONMENT CONSTANTS & ECONOMICS ---
+    C_base: float = 21000.0             # Fixed gas overhead per transaction batch
+    C_mar: float = 15000.0              # Marginal gas cost per transaction in batch
     gas_scaling_factor: float = 10.0    # s_g from SPEC: Efficiency = n * (ref - t) / s_g
     gas_to_gwei_scale: float = 1e9      # Divisor for raw gas (wei) to Gwei
     execution_capacity: float = 500.0   # Max transactions per block
@@ -28,7 +30,7 @@ class TransitionBuildConfig:
     # --- ECONOMICS & URGENCY ---
     gas_reference_window: int = 128
     normalize_state: bool = False        # Forced TRUE for strict pipeline
-    urgency_alpha: float = 3.0          # Exponential curve steepness
+    urgency_alpha: float = 3.5          # Exponential curve steepness
     urgency_beta: float = 0.0005          # V25: Certified Smart++ Optimal Urgency
     reward_scale: float = 1.0           # Baseline scale (Alpha handling in Model)
 

@@ -25,25 +25,21 @@ This guide explains how to **Build**, **Train**, **Evaluate**, and **Audit** the
 
 ---
 
-## 1) Build Dataset (V20)
+## 1) Build Dataset (V32 Large Scale)
 
-Build the training dataset with **Spec-aligned Reward**, **Robust Arrival Scaling**, and **High-Precision Oracle**.
-
-**Design philosophy:**
-- `arrival_scale=0.05`: Ensures average demand is well below capacity.
-- `deadline_penalty=1,000,000`: Death-sentence for missing a deadline.
-- `PYTHONDONTWRITEBYTECODE=1`: Crucial to avoid stale Numba/Python cache.
+Build bộ dữ liệu từ file raw khổng lồ (2023-2026). Sử dụng tối ưu hóa bộ nhớ để tránh OOM.
 
 ```fish
-nohup python Final_Project/code/simple-offline.py \
-    --build-from-raw Final_Project/Data/data_2024-04-10_2026-04-10.parquet \
-    --output Final_Project/Data/transitions_discrete_v28.parquet \
+nohup env LD_PRELOAD="/opt/intel/oneapi/mkl/2026.0/lib/libmkl_rt.so.3:/usr/lib/libmimalloc.so" \
+PYTHONDONTWRITEBYTECODE=1 \
+./venv/bin/python Final_Project/code/simple-offline.py \
+    --build-from-raw Final_Project/Data/data_2023-01-01_2026-04-20.parquet \
+    --output Final_Project/Data/transitions_v32_Large.parquet \
     --use-oracle \
     --expert-ratio 0.4 \
     --medium-ratio 0.3 \
     --random-ratio 0.3 \
-    --mode strict > build_v28.log 2>&1 &
-
+    --mode strict > build_v32_large.log 2>&1 &
 ```
 
 **Expected output:**
@@ -85,18 +81,30 @@ Check action-state correlations before training:
 
 ---
 
-## 4) Train (DiscreteCQL V20)
+## 4) Train (DiscreteCQL V32 - SOTA Performance)
+
+Sử dụng bộ dữ liệu **V32_C** với các tối ưu hóa **MKL 2026.0** và **Mimalloc**.
 
 ```fish
-nohup ./venv/bin/python Final_Project/code/simple-offline.py \
-    --input Final_Project/Data/transitions_discrete_v28.parquet \
+nohup env LD_PRELOAD="/opt/intel/oneapi/mkl/2026.0/lib/libmkl_rt.so.3:/usr/lib/libmimalloc.so" \
+    ./venv/bin/python3 Final_Project/code/simple-offline.py \
+    --input Final_Project/Data/transitions_v32_C.parquet \
     --train-toy \
-    --n-steps 100000 \
-    --sample-size 100000 \
-    --save-interval 5000 \
-    --skip-validation \
-    > train_bcq_v28_fix.log 2>&1 &
+    --algo cql \
+    --sample-size 6000000 \
+    --n-steps 500000 \
+    --batch-size 1024 \
+    --save-interval 10000 \
+    --eval-interval 10000 \
+    --limit-eval-episodes 50 \
+    --seed 42 > train_v32_C.log 2>&1 &
 ```
+
+> **🚀 Performance Notes:**
+> - **MKL:** Tận dụng AVX-512 VNNI trên i5-11300H để nhân ma trận cực nhanh.
+> - **Mimalloc:** Thay thế `malloc` mặc định để giảm phân mảnh bộ nhớ, trực tiếp giảm tỷ lệ Cache Misses.
+> - **Memory Contiguity:** Dữ liệu được ép về C-contiguous ngay khi load để CPU Prefetcher hoạt động tối đa.
+> - **Multi-workers:** Sử dụng `n_dataloader_workers=4` để CPU không bao giờ bị "đói" dữ liệu.
 taskset -c 0,1,2,3 ./venv/bin/python Final_Project/visualize/leaderboard_dt_v28.py \
     --models d3rlpy_logs/DT_V28_20260418_0325_20260418032535/model_100000.d3 \
     --episodes 50 \
@@ -201,7 +209,7 @@ The reward follows `REWARD_DESIGN_SPEC.md` with 3 components:
 ### 8.1) Efficiency
 $$R_{eff} = n_t \times \frac{g_{ref} - g_t}{s_g}, \quad s_g = 10$$
 
-- No `C_base` overhead (removed in V12+).
+- **C_base overhead:** Fixed gas cost per batch (21,000 gas) to enforce Batching.
 - Positive when executing at below-average gas price.
 
 ### 8.2) Urgency

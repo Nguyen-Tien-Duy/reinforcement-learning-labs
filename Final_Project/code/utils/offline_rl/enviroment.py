@@ -85,7 +85,9 @@ class CharityGasEnv(gym.Env):
         # Injection: Normalized Queue and Time for initial observation
         if self.normalize_state:
             denom = np.where((self.maxs - self.mins) == 0, 1.0, (self.maxs - self.mins))
-            state_arr[self._Q_IDX] = (self.queue_size - self.mins[self._Q_IDX]) / denom[self._Q_IDX]
+            # [SOTA] Apply Log-Scaling to queue before normalization
+            log_q = np.log1p(float(self.queue_size))
+            state_arr[self._Q_IDX] = (log_q - self.mins[self._Q_IDX]) / denom[self._Q_IDX]
             state_arr[self._T_IDX] = (self.time_to_deadline - self.mins[self._T_IDX]) / denom[self._T_IDX]
         
         return state_arr, {}
@@ -123,9 +125,15 @@ class CharityGasEnv(gym.Env):
         
         reward_scale = self.config.reward_scale
 
-        # Efficiency (Spec-aligned: R_eff = n * (gas_ref - gas_t) / s_g)
+        # Efficiency (Spec-aligned: R_eff = [n * (ref - t) - C_base * t * (n > 0)] / s_g)
         s_g = self.config.gas_scaling_factor
-        R_eff = executed_volume * (gas_ref - gas_t) / s_g
+        C_base = getattr(self.config, "C_base", 21000.0)
+        has_exec = 1.0 if executed_volume > 0 else 0.0
+        
+        efficiency_savings = executed_volume * (gas_ref - gas_t)
+        overhead_cost = (C_base / 1e9) * gas_t * has_exec
+        
+        R_eff = (efficiency_savings - overhead_cost) / s_g
         
         # Urgency (Spec 2.2 with Clipping)
         beta = self.config.urgency_beta
@@ -179,7 +187,9 @@ class CharityGasEnv(gym.Env):
         # Inject physically consistent queue and time (synced with builder)
         if self.mins is not None and self.maxs is not None:
             denom = np.where((self.maxs - self.mins) == 0, 1.0, (self.maxs - self.mins))
-            next_obs[self._Q_IDX] = (self.queue_size - self.mins[self._Q_IDX]) / denom[self._Q_IDX]
+            # [SOTA] Apply Log-Scaling to queue before normalization
+            log_q = np.log1p(float(self.queue_size))
+            next_obs[self._Q_IDX] = (log_q - self.mins[self._Q_IDX]) / denom[self._Q_IDX]
             next_obs[self._T_IDX] = (self.time_to_deadline - self.mins[self._T_IDX]) / denom[self._T_IDX]
         else:
             # Nếu không có bộ chuẩn hóa, trả về giá trị vật lý thô (Dành cho DT có scaler nội bộ)

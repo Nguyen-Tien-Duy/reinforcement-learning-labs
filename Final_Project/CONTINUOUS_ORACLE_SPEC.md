@@ -1,6 +1,6 @@
 # Kiến trúc hệ thống Continuous Oracle & Offline RL
 
-Tài liệu này định nghĩa cấu trúc để nâng cấp hệ thống tối ưu phí Gas sang không gian hành động liên tục (Continuous Action Space) kết hợp với thuật toán dán nhãn Thần thánh (Hindsight Oracle Labeling). Định hướng này giúp hệ thống mô phỏng chính xác "Lợi thế quy mô" (Economies of Scale) và tối ưu điểm hòa vốn.
+Tài liệu này định nghĩa cấu trúc để tối ưu phí Gas Ethereum sử dụng **Discrete Action Space** (5 bins) kết hợp với thuật toán dán nhãn Thần thánh (Hindsight Oracle Labeling). Định hướng này giúp hệ thống mô phỏng chính xác "Lợi thế quy mô" (Economies of Scale) và tối ưu điểm hòa vốn trong khi vẫn đảm bảo sự ổn định khi huấn luyện mạng Neural.
 
 ---
 

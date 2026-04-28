@@ -1,6 +1,6 @@
 ================ BẮT ĐẦU CHẠY THUẬT TOÁN ================
 Đang thu thập tập mẫu (60000 episodes)...
--> Thời gian lấy mẫu, ước lượng Model P và R: 28.23s
+-> Thời gian lấy mẫu, ước lượng Model P và R: 28.53s
 
 Bắt đầu chạy Value Iteration...
 [VI] Vòng lặp:  100 | Độ lệch Max Delta: 0.369730
@@ -18,20 +18,41 @@ Bắt đầu chạy Value Iteration...
 [VI] Vòng lặp: 1300 | Độ lệch Max Delta: 0.000002
 Value Iteration hội tụ sau 1376 vòng lặp.
 
-Bắt đầu chạy Policy Iteration...
-[PI] Vòng lớn:  1 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 772
-[PI] Vòng lớn:  2 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 32
-[PI] Vòng lớn:  3 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 26
-[PI] Vòng lớn:  4 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 12
-Policy Iteration dừng sớm với 12 changes còn lại.
-Policy Iteration hội tụ sau 4 vòng lặp.
+Bắt đầu chạy Policy Iteration (Max Iters: 20)...
+[PI] Vòng lớn:  1 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 289
+[PI] Vòng lớn:  2 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 205
+[PI] Vòng lớn:  3 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 181
+[PI] Vòng lớn:  4 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 174
+[PI] Vòng lớn:  5 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 193
+[PI] Vòng lớn:  6 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 234
+[PI] Vòng lớn:  7 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 161
+[PI] Vòng lớn:  8 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 174
+[PI] Vòng lớn:  9 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 162
+[PI] Vòng lớn: 10 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 182
+[PI] Vòng lớn: 11 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 160
+[PI] Vòng lớn: 12 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 138
+[PI] Vòng lớn: 13 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 177
+[PI] Vòng lớn: 14 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 197
+[PI] Vòng lớn: 15 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 160
+[PI] Vòng lớn: 16 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 191
+[PI] Vòng lớn: 17 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 213
+[PI] Vòng lớn: 18 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 155
+[PI] Vòng lớn: 19 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 213
+[PI] Vòng lớn: 20 | Vòng nhỏ Evaluation: 1376 | Điểm thay đổi Policy: 178
+Policy Iteration đạt giới hạn 20 vòng lặp. Dừng để tránh vòng lặp vô hạn.
+Policy Iteration hội tụ sau 20 vòng lặp.
 
 === TỔNG KẾT & SO SÁNH ===
- Tốc độ hội tụ thuật toán:
-  - Value Iteration : 30.1236 giây
-  - Policy Iteration: 47.6829 giây
+ Tốc độ hội tụ thuật toán (Training):
+  - Value Iteration : 9.8325 giây
+  - Policy Iteration: 64.2567 giây
+
+ Thời gian thực thi đánh giá (Evaluation trên 100 episodes):
+  - Random Agent    : 0.0449 giây
+  - Value Iteration : 0.0755 giây
+  - Policy Iteration: 0.0223 giây
 
  Reward trung bình (trên 100 episodes):
-  - Random Agent    : 20.81
-  - Value Iteration : 46.09
-  - Policy Iteration: 45.54
+  - Random Agent    : 22.02
+  - Value Iteration : 42.53
+  - Policy Iteration: 12.22

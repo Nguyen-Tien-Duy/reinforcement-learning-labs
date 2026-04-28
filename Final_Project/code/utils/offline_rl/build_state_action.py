@@ -80,16 +80,21 @@ def build_state_action_frame(raw_df: pd.DataFrame, config: TransitionBuildConfig
 
     gas_ref = gas_price.groupby(episode_id, dropna=False).transform(lambda x: x.rolling(window=128, min_periods=1).mean())
 
+    # [SOTA] Áp dụng Log-Scaling để ổn định phân phối dữ liệu
+    log_gas_history = [np.log1p(pd.to_numeric(s, errors="coerce").fillna(0.0).to_numpy() / 1e9) for s in gas_history_cols]
+    log_queue = np.log1p(queue_size.to_numpy(dtype=np.float32))
+    log_gas_ref = np.log1p(gas_ref.to_numpy(dtype=np.float32) / 1e9)
+
     state_matrix = np.stack([
-        *(series.to_numpy(dtype=np.float32) for series in gas_history_cols),
+        *log_gas_history,
         p_t.to_numpy(dtype=np.float32),
         m_t.to_numpy(dtype=np.float32),
         a_t.to_numpy(dtype=np.float32),
         u_t.to_numpy(dtype=np.float32),
         b_t.to_numpy(dtype=np.float32),
-        queue_size.to_numpy(dtype=np.float32),
+        log_queue,
         time_to_deadline.to_numpy(dtype=np.float32),
-        gas_ref.to_numpy(dtype=np.float32),
+        log_gas_ref,
     ], axis=1)
 
 

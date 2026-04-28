@@ -47,13 +47,21 @@ def build_reward_episode_frame(
     executed_volume_proxy = np.floor(action_continuous * pre_execute_queue)
     executed_volume_proxy = np.clip(executed_volume_proxy, 0, execution_capacity)
 
-    # 2. Efficiency Component (Spec 2.1)
+    # 2. Efficiency Component (Spec 2.1 & 2.2)
     gas_scale = getattr(config, "gas_to_gwei_scale", 1e9)
     gas_t_gwei = df["gas_t"].to_numpy(dtype=np.float32) / gas_scale
     gas_ref_gwei = gas_reference.to_numpy(dtype=np.float32) / gas_scale
     
+    C_base = getattr(config, "C_base", 21000.0)
     s_g = getattr(config, "gas_scaling_factor", 10.0)
-    R_eff = executed_volume_proxy * ((gas_ref_gwei - gas_t_gwei) / s_g)
+    
+    # R_eff = [n * (g_ref - g_t) - C_base * g_t * (n > 0)] / s_g
+    # This formula creates the "Economies of Scale" incentive.
+    has_execution = (executed_volume_proxy > 0).astype(np.float32)
+    efficiency_savings = executed_volume_proxy * (gas_ref_gwei - gas_t_gwei)
+    overhead_cost = (C_base / 1e9) * gas_t_gwei * has_execution # C_base is in gas units
+    
+    R_eff = (efficiency_savings - overhead_cost) / s_g
 
     # 3. Urgency Penalty Component (Spec 2.2)
     beta = getattr(config, "urgency_beta", 0.01)
