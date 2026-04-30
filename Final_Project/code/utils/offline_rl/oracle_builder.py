@@ -102,15 +102,27 @@ def _compute_trajectory_njit(
                 exec_cost = (float(n) * (g_t / s_g)) + (has_exec * (C_base / 1e9) * (g_t / s_g))
                 
                 Q_next_real = remaining + w_next
-                q_next_idx = int(np.ceil(Q_next_real / Q_step))
-                if q_next_idx < 0: q_next_idx = 0
-                if q_next_idx > Q_bins: q_next_idx = Q_bins
+                
+                q_next_exact = Q_next_real / Q_step
+                q_floor = int(np.floor(q_next_exact))
+                q_ceil = q_floor + 1
+                
+                if q_floor < 0: q_floor = 0
+                if q_floor > Q_bins: q_floor = Q_bins
+                if q_ceil < 0: q_ceil = 0
+                if q_ceil > Q_bins: q_ceil = Q_bins
+                
+                weight = q_next_exact - float(q_floor)
+                if weight < 0.0: weight = 0.0
+                if weight > 1.0: weight = 1.0
+                
+                v_next = (1.0 - weight) * V[t+1, q_floor] + weight * V[t+1, q_ceil]
 
                 time_to_deadline = episode_hours - (t * (episode_hours / T)) 
                 time_ratio = max(0.0, min(1.0, time_to_deadline / episode_hours))
                 delay_cost = beta * remaining * np.exp(alpha * (1.0 - time_ratio))
                 
-                total = exec_cost + delay_cost + V[t+1, q_next_idx]
+                total = exec_cost + delay_cost + v_next
                 if total < best_cost:
                     best_cost = total
                     best_bin = b
@@ -202,7 +214,7 @@ def _process_episode_worker(args):
         opt_bin, _, _ = compute_god_view_trajectory(
             gas_prices=gas_prices_gwei,
             incoming_requests=incoming,
-            Q_max=10000,
+            Q_max=150000,
             beta=beta,
             alpha=alpha,
             episode_hours=ep_hours,
@@ -278,7 +290,7 @@ def apply_oracle_to_episodes(
         ))
     
     mem_avail_gb = psutil.virtual_memory().available / (1024**3)
-    max_workers_ram = int((mem_avail_gb * 0.7) / 1.0)
+    max_workers_ram = int((mem_avail_gb * 0.9) / 1.0)
     final_workers = max(1, min(os.cpu_count() or 1, max_workers_ram))
     
     CHUNK_SIZE = 100

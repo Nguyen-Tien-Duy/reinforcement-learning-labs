@@ -23,7 +23,7 @@ from tabulate import tabulate
 if multiprocessing.get_start_method(allow_none=True) is None:
     multiprocessing.set_start_method("spawn")
 
-def evaluate_policy(ep_list, policy_func, config, mins, maxs, is_oracle=False, model_name=""):
+def evaluate_policy(ep_list, model, config, mins, maxs, is_oracle=False, model_name="", target_return=475.0):
     """Giả lập vật lý - Đã được tối ưu tốc độ"""
     all_costs = []
     all_pure_gas = []
@@ -42,25 +42,39 @@ def evaluate_policy(ep_list, policy_func, config, mins, maxs, is_oracle=False, m
         if is_oracle:
             env.expert_actions = ep_df["action"].to_numpy().astype(int)
             
+        is_dt = "DecisionTransformer" in str(type(model)) if model else False
+        
+        if is_dt:
+            # Sử dụng Wrapper chính chủ của d3rlpy thay vì tự build tensor
+            wrapper = model.as_stateful_wrapper(target_return=target_return)
+
+        # [SOTA SPEED] Memory Alignment cho Inference
         obs, _ = env.reset()
         done = False
         ep_cost = 0.0
         ep_miss = False
         penalty_cost = 0.0
-        
-        # [SOTA SPEED] Memory Alignment cho Inference
+        reward = 0.0 # Reward khởi tạo cho step đầu tiên
+
         while not done:
             if is_oracle:
                 action = env.expert_actions[min(env.current_step, len(env.expert_actions)-1)]
+            elif is_dt:
+                # Log transform reward giống hệt lúc train trước khi đưa vào wrapper
+                transformed_rew = np.sign(reward) * np.log1p(np.abs(reward))
+                # Wrapper tự động quản lý history, padding và sliding window
+                action = int(wrapper.predict(obs.flatten(), float(transformed_rew)))
             else:
-                # Ép về C-contiguous để CPU prefetch nhanh nhất
+                # Baseline cũ (CQL, BCQ, v.v...)
                 obs_contiguous = np.ascontiguousarray(obs.reshape(1, -1), dtype=np.float32)
-                res = policy_func(obs_contiguous)
-                # Xử lý cả trường hợp trả về mảng (d3rlpy) hoặc trả về số nguyên (baseline)
+                res = model.predict(obs_contiguous)
                 action = int(res[0] if isinstance(res, (list, np.ndarray)) else res)
                 
             n_t = config.action_bins[action] * min(env.queue_size, config.execution_capacity)
-            obs, reward, terminated, truncated, info = env.step(action)
+            obs_next, step_reward, terminated, truncated, info = env.step(action)
+            
+            obs = obs_next
+            reward = step_reward # Cập nhật reward cho bước predict tiếp theo của DT
             ep_cost += info.get("cost", 0.0)
             tot_exec_txs += n_t
             
@@ -86,13 +100,13 @@ def evaluate_policy(ep_list, policy_func, config, mins, maxs, is_oracle=False, m
             
     return np.mean(all_costs), np.mean(all_misses) * 100, np.mean(all_pure_gas), np.mean(all_penalties), tot_exec_txs, tot_miss_txs
 
-def _worker_eval_model(m_path, ep_list, config, mins, maxs):
+def _worker_eval_model(m_path, ep_list, config, mins, maxs, target_return=475.0):
     """Worker CHỈ load model và chạy, data đã được nạp sẵn"""
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
     try:
         model = d3rlpy.load_learnable(m_path, device=device)
         model_name = Path(m_path).name
-        cost, miss, pure_gas, penalty, exec_txs, miss_txs = evaluate_policy(ep_list, model.predict, config, mins, maxs, model_name=model_name)
+        cost, miss, pure_gas, penalty, exec_txs, miss_txs = evaluate_policy(ep_list, model, config, mins, maxs, model_name=model_name, target_return=target_return)
         return {"name": Path(m_path).name, "cost": cost, "miss": miss, "pure_gas": pure_gas, "penalty": penalty, "exec_txs": exec_txs, "miss_txs": miss_txs, "error": None}
     except Exception as e:
         return {"name": Path(m_path).name, "cost": 0, "miss": 0, "pure_gas": 0, "penalty": 0, "exec_txs": 0, "miss_txs": 0, "error": str(e)}
@@ -103,6 +117,7 @@ def main():
     parser.add_argument("--data", type=str, default="Final_Project/Data/transitions_discrete_v28.parquet")
     parser.add_argument("--norm", type=str, default="Final_Project/Data/state_norm_params.json")
     parser.add_argument("--episodes", type=int, default=10) # Mặc định 10 cho nhanh
+    parser.add_argument("--target", type=float, default=475.0)
     args = parser.parse_args()
 
     # 1. NẠP DỮ LIỆU & CẤU HÌNH (MỘT LẦN DUY NHẤT)
@@ -142,12 +157,19 @@ def main():
     # 2. CHẠY BASELINES
     print("[+] Đang chạy Baselines (Greedy, Random & Oracle)...")
     
-    c_g, m_g, g_g, p_g, e_g, mt_g = evaluate_policy(ep_list, lambda x: config.n_action_bins - 1, config, mins, maxs)
+    # Dummy model class cho các Baseline cũ
+    class DummyPredictor:
+        def __init__(self, func):
+            self.func = func
+        def predict(self, obs):
+            return self.func(obs)
+
+    c_g, m_g, g_g, p_g, e_g, mt_g = evaluate_policy(ep_list, DummyPredictor(lambda x: [config.n_action_bins - 1]), config, mins, maxs)
     gas_tx_g = (g_g * len(ep_list)) / e_g if e_g > 0 else 0
     print(f"✅ XONG BASELINE: Greedy (Bán Ngay) | Chi phí: {c_g:,.0f} | Gas: {g_g:,.0f} | Phạt: {p_g:,.0f} | Trễ: {m_g:.1f}%")
     results.append(["Greedy (Bán Ngay)", f"{c_g:,.0f}", f"{g_g:,.0f}", f"{p_g:,.0f}", f"{m_g:.1f}%", "-", f"{e_g:,.0f}", f"{gas_tx_g:,.2f}", "0.0%"])
 
-    c_r, m_r, g_r, p_r, e_r, mt_r = evaluate_policy(ep_list, lambda x: np.random.randint(0, config.n_action_bins), config, mins, maxs)
+    c_r, m_r, g_r, p_r, e_r, mt_r = evaluate_policy(ep_list, DummyPredictor(lambda x: [np.random.randint(0, config.n_action_bins)]), config, mins, maxs)
     gas_tx_r = (g_r * len(ep_list)) / e_r if e_r > 0 else 0
     savings_r = ((gas_tx_g - gas_tx_r) / gas_tx_g) * 100 if gas_tx_g > 0 else 0
     print(f"✅ XONG BASELINE: Random | Chi phí: {c_r:,.0f} | Gas: {g_r:,.0f} | Phạt: {p_r:,.0f} | Trễ: {m_r:.1f}%")
@@ -186,7 +208,7 @@ def main():
         
         with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
             # Gửi ep_list trực tiếp cho các worker
-            futures = [executor.submit(_worker_eval_model, p, ep_list, config, mins, maxs) for p in all_model_paths]
+            futures = [executor.submit(_worker_eval_model, p, ep_list, config, mins, maxs, args.target) for p in all_model_paths]
             for future in concurrent.futures.as_completed(futures):
                 res = future.result()
                 if res["error"]:

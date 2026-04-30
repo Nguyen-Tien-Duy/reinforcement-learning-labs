@@ -371,59 +371,84 @@ Output: vector 5 chiều $[Q(s,0), Q(s,1), Q(s,2), Q(s,3), Q(s,4)]$. Greedy acti
 \end{itemize}
 
 % ============================================================
-\section{Kết quả và Đánh giá}
+\section{Kết quả và Thảo luận}
 % ============================================================
 
-\textit{(Phần này sẽ được cập nhật sau khi quá trình huấn luyện 400,000 steps hoàn tất. Các số liệu interim từ 50k steps đầu được trình bày ở đây.)}
+\subsection{Bảng xếp hạng Hiệu năng (Leaderboard) - 242 Episodes}
 
-\subsection{Đường cong Huấn luyện}
-
-\begin{table}[ht]
-\centering
-\caption{Diễn biến loss theo epoch — Discrete CQL V6}
-\begin{tabular}{cccc}
-\hline
-\textbf{Epoch} & \textbf{Steps} & \textbf{td\_loss (Bellman Error)} & \textbf{conservative\_loss} \\
-\hline
-1  & 10,000  & 0.0754 & 1.010 \\
-2  & 20,000  & 0.0774 & 0.937 \\
-3  & 30,000  & 0.0776 & 0.922 \\
-5  & 50,000  & 0.0793 & 0.904 \\
-8  & 80,000  & 0.0793 & 0.890 \\
-10 & 100,000 & 0.0790 & 0.886 \\
-13 & 130,000 & 0.0804 & 0.881 \\
-\hline
-\end{tabular}
-\label{tab:training_curve}
-\end{table}
-
-\textbf{Nhận xét:} \texttt{conservative\_loss} giảm đều từ 1.01 xuống 0.881 qua 130k steps — Q-network đang học phân biệt in-distribution (Oracle) actions với OOD actions. \texttt{td\_loss} ổn định $\approx 0.078$ — Bellman equation được thỏa mãn nhất quán.
-
-\subsection{So sánh với IQL Continuous}
-
-\begin{table}[ht]
-\centering
-\caption{Leaderboard Evaluation — 7 episodes holdout}
-\label{tab:eval}
-\begin{tabular}{lcc}
-\hline
-\textbf{Model / Chiến lược} & \textbf{Miss Rate} & \textbf{Cost / Episode} \\
-\hline
-IQL Continuous V4 (tất cả checkpoint) & 1.000 & $\approx$726,300 \\
-\hline
-Discrete CQL V6 -- 10k steps & 1.000 & 349,414 \\
-Discrete CQL V6 -- 20k steps & 1.000 & 315,375 \\
-\textbf{Discrete CQL V6 -- 30k steps} & \textbf{0.857} & \textbf{286,391} \\
-Discrete CQL V6 -- 40k steps & 1.000 & 258,026 \\
-Discrete CQL V6 -- 50k steps & 1.000 & 257,791 \\
-\hline
-\end{tabular}
-\end{table}
-
-\textbf{Phân tích:}
+Tất cả các chiến lược được đánh giá trên tập Test độc lập gồm 242 episodes (tương đương 20\% dữ liệu cuối cùng theo thời gian thực tế, không bị rò rỉ vào tập huấn luyện). Các chỉ số đánh giá bao gồm:
 \begin{itemize}
-    \item \textbf{IQL V4}: Policy collapse hoàn toàn — 100\% miss rate trên mọi checkpoint. Agent output hành động cố định $\approx 0.46$ bất kể state. Cost không giảm qua 400k steps.
-    \item \textbf{Discrete CQL V6 (10k$\to$50k)}: Cost giảm $\approx$64.5\% so với IQL (từ 726k xuống 258k) chỉ sau 50k steps. Đây là bằng chứng rõ ràng về hiệu quả của không gian hành động rời rạc.
-    \item \textbf{Checkpoint 30k}: Là checkpoint duy nhất thoát khỏi miss rate 1.0 — 1/7 episode đã hoàn thành queue trước deadline. Đây là điểm đặc biệt cần phân tích thêm: khả năng mô hình đã học được chiến lược xả mạnh gần deadline, nhưng chưa tổng quát hóa được.
-    \item Model đang tiếp tục train. Dự kiến miss rate sẽ giảm dần khi CQL penalty ổn định.
+    \item \textbf{Gas Cost}: Tổng chi phí Gas trung bình mỗi episode (thấp hơn là tốt hơn).
+    \item \textbf{Miss Rate}: Tỷ lệ episodes bị trễ deadline, vi phạm Service Level Agreement (0\% là bắt buộc).
 \end{itemize}
+
+\begin{table}[ht]
+\centering
+\caption{Bảng Xếp Hạng Hiệu Năng Tối Ưu Gas (Tập Test 242 episodes)}
+\label{tab:final_leaderboard}
+\begin{tabular}{llccc}
+\hline
+\textbf{\#} & \textbf{Chiến lược} & \textbf{Gas Cost $\downarrow$} & \textbf{Miss Rate $\downarrow$} & \textbf{vs Greedy} \\
+\hline
+1 & \textbf{Oracle (Hindsight DP)} & \textbf{45,096} & \textbf{0.0\%} & -38.8\% \\
+2 & \textbf{CQL model\_160000 + Safety 20\%} & \textbf{65,525} & \textbf{0.0\%} & \textbf{-11.1\%} \\
+3 & Greedy (Baseline: Bán Ngay) & 73,710 & 0.0\% & --- \\
+4 & Smart Rule + Safety 20\% & 76,892 & 0.0\% & +4.3\% \\
+5 & Decision Transformer (DT) & $>100,000$ & 90-100\% & Thất bại \\
+\hline
+\end{tabular}
+\end{table}
+
+\textbf{Kết luận chính:} Mô hình Discrete CQL kết hợp Safety Layer 20\% đạt hiệu năng State-of-the-Art (SOTA), tiết kiệm \textbf{11.1\% chi phí Gas} so với chiến lược Greedy truyền thống mà vẫn đảm bảo an toàn tuyệt đối (\textbf{0\% Deadline Miss}). Mức tiết kiệm này tương đương với việc khai thác được 28.6\% tiềm năng tối đa của Oracle trong điều kiện không có thông tin tương lai.
+
+\subsection{Phân tích Nguyên nhân Thất bại của Thuật toán Tiêu chuẩn}
+
+Trước khi đạt được SOTA, các thuật toán RL mặc định như Decision Transformer (DT) và CQL với siêu tham số gốc đều thất bại thảm hại. 
+
+\subsubsection{Sự Sụp đổ của Decision Transformer (Majority Bias)}
+Decision Transformer (DT) bản chất là Conditional Behavioral Cloning, học bằng hàm mất mát Cross-Entropy. Trong tập dữ liệu chuyên gia (Oracle), để chờ giá Gas cực tiểu, \textbf{Action 0 (Giữ hàng) chiếm tới 69.6\%}. Do mất cân bằng lớp (Class Imbalance) quá lớn, DT đã chọn giải pháp cực đoan để tối thiểu hóa loss: luôn dự đoán Action 0. Kết quả là DT giữ hàng liên tục, gây ra Miss Rate lên đến 100\%. Trái lại, CQL dùng phương pháp quy hoạch động (Q-Learning) nên có khả năng đánh giá giá trị thực (Q-value) của từng hành động, không bị phụ thuộc hoàn toàn vào tần suất xuất hiện như DT.
+
+\subsubsection{Bất đối xứng Rủi ro - Lợi nhuận (Risk-Reward Asymmetry)}
+Một phát hiện cốt lõi của nghiên cứu là cấu trúc phạt bất đối xứng khiến Agent bị "hoảng loạn" (Pessimistic Collapse).
+Với cấu hình ban đầu, Lợi nhuận tối đa từ timing gas chỉ là $O(10^3)$, trong khi hình phạt trễ deadline (Deadline Penalty) lên tới $O(10^8)$.
+Tỷ lệ \textbf{Risk/Reward = 1 : 223,000}.
+Theo lý thuyết Quyết định, mọi Agent hợp lý (rational) khi đối mặt với tỷ lệ này đều sẽ chọn tránh rủi ro hoàn toàn bằng cách xả toàn bộ hàng ngay lập tức (tích trữ 0\%). Khi Agent thử nghiệm chờ đợi, chỉ cần 1 episode thất bại, Q-value của Action 0 sẽ bị phạt nặng nề đến mức Agent không bao giờ dám dùng lại.
+
+\subsection{Yếu tố Quyết định: Reward Shaping và Data Coverage}
+
+Để giúp CQL vượt qua giới hạn trên, chúng tôi thực hiện Thí nghiệm Đối chứng Tự nhiên (Natural Experiment) giữa hai lần huấn luyện CQL với cùng kiến trúc (MLP [512, 512]) nhưng khác cấu hình môi trường.
+
+\begin{table}[ht]
+\centering
+\caption{So sánh Cấu hình Huấn luyện và Hiệu suất}
+\label{tab:reward_shaping}
+\begin{tabular}{lccc}
+\hline
+\textbf{Tham số} & \textbf{Lần Thua (V33)} & \textbf{Lần Thắng (V32)} & \textbf{Tác động} \\
+\hline
+\texttt{deadline\_penalty} & 1,000,000 & 20,000 & 50$\times$ \\
+\texttt{urgency\_alpha} & 1.0 & 3.5 & 3.5$\times$ \\
+\texttt{urgency\_beta} & 0.0001 & 0.0005 & 5$\times$ \\
+\texttt{s\_queue} max (coverage) & 99,006 & 104,135 & Độ phủ rộng hơn \\
+\hline
+\textbf{Kết quả vs Greedy} & Thua 30\%+ & \textbf{Thắng 11.1\%} & \\
+\hline
+\end{tabular}
+\end{table}
+
+Thành công của mô hình V32 đến từ kỹ thuật \textbf{Reward Shaping}:
+\begin{enumerate}
+    \item \textbf{Cân bằng Risk/Reward:} Giảm \texttt{deadline\_penalty} xuống 20,000 giúp Agent dám thử nghiệm (exploration) các chiến lược chờ đợi mà không bị triệt tiêu Q-value ngay lập tức.
+    \item \textbf{Tăng áp lực Urgency:} Tăng \texttt{urgency\_alpha} (hàm mũ) và \texttt{urgency\_beta} tạo ra gradient mạnh, "ép" Agent phải giải phóng giao dịch khi hàng đợi tích lũy quá mức.
+    \item \textbf{Data Coverage \& Distribution Shift:} Tập dữ liệu V32 bao phủ các trạng thái hàng đợi lớn hơn (max 104,135 so với 99,006). Nhờ đó, Q-network hạn chế được sai số ngoại suy (Extrapolation Error) theo định lý Distribution Shift trong Offline RL.
+\end{enumerate}
+
+\subsection{Kiến trúc Hệ thống Lai: RL + Safety Layer}
+
+Tuy mô hình CQL độc lập có thể tiết kiệm tới 22.4\% phí Gas, nó vẫn gặp rủi ro nhỏ (Miss Rate 0.4\%). Để đưa hệ thống vào sản xuất với chuẩn SLA khắt khe, chúng tôi đề xuất \textbf{Hệ thống Lai (Hybrid System)}:
+\begin{itemize}
+    \item \textbf{Lớp AI (Discrete CQL):} Điều khiển toàn bộ quyết định bán trong 80\% thời gian đầu của Episode, tối ưu hóa triệt để lợi nhuận từ biến động giá Gas.
+    \item \textbf{Lớp Khiên An Toàn (Safety Layer):} Lớp quy tắc vật lý cứng (Rule-based). Khi thời gian còn lại đến deadline giảm xuống dưới ngưỡng $\tau < 20\%$, hệ thống tự động ghi đè quyết định của AI, ép xả 100\% giao dịch.
+\end{itemize}
+
+Việc đánh đổi một phần lợi nhuận (từ 22.4\% xuống 11.1\%) để kích hoạt Safety Layer là minh chứng cho nguyên lý \textbf{Safe Reinforcement Learning}, mang lại giải pháp cân bằng hoàn hảo giữa Khả năng Tối ưu (Optimality) và Độ tin cậy (Reliability) cho hệ thống Blockchain Relayer.

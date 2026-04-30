@@ -556,7 +556,7 @@ def train_toy_iql(dataframe, args) -> int:
             learning_rate=3e-4,
             batch_size=args.batch_size,
             gamma=0.99,
-            action_flexibility=0.5,
+            action_flexibility=0.05,
             encoder_factory=encoder,
             observation_scaler=obs_scaler,
             reward_scaler=StandardRewardScaler(mean=median, std=iqr),
@@ -674,7 +674,7 @@ def train_toy_iql(dataframe, args) -> int:
         }
 
     fit_evaluators = {}
-    if not args.skip_validation:
+    if not args.skip_validation and args.limit_eval_episodes > 0:
         fit_evaluators = get_evaluators(eval_df, args)
 
     algo.fit(

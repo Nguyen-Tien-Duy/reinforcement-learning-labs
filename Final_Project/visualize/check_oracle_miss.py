@@ -16,7 +16,7 @@ def check_miss_rate(file_path):
         
         # 2. Xác định ranh giới 10% cuối (Tập Test) để báo cáo thêm
         all_unique_ids = sorted(df['episode_id'].unique())
-        split_idx = int(len(all_unique_ids) * 0.9)
+        split_idx = int(len(all_unique_ids) * 0.8)
         test_ids = all_unique_ids[split_idx:]
         
         def calculate_stats(data_df):

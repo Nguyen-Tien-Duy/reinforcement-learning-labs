@@ -123,55 +123,49 @@ taskset -c 0,1,2,3 ./venv/bin/python Final_Project/visualize/leaderboard_dt_v28.
 
 ---
 
-## 5) Evaluate — Single Model
+## 5) Evaluate — Quick Test (SOTA Performance)
 
-```fish
-env OMP_NUM_THREADS=3 PYTHONPATH="/mnt/WindowsD/Reinforcement Learning/labs/Final_Project/code" \
-./venv/bin/python ./Final_Project/code/simple-offline.py \
-    --input Final_Project/Data/transitions_discrete_v17.parquet \
-    --evaluate \
-    --model-path d3rlpy_logs/DiscreteCQL_V6_<timestamp>/model_100000.d3 \
-    --eval-ratio 0.2 \
-    --limit-eval-episodes 20 \
-    --deadline-penalty 10000.0 \
-    --urgency-beta 10.0 \
-    --urgency-alpha 3.0 \
-    --reward-scale 1.0 \
-    --execution-capacity 200.0 \
-    --arrival-scale 0.5 \
-    --episode-hours 24 \
-    --history-window 3 \
-    --action-col gas_used \
-    --skip-validation
+Dùng để đánh giá nhanh 10 episodes cho thư mục model vừa mới train xong:
+
+```bash
+nohup env LD_PRELOAD="/opt/intel/oneapi/mkl/2026.0/lib/libmkl_rt.so.3:/usr/lib/libmimalloc.so" \
+    ./venv/bin/python Final_Project/visualize/leaderboard_v28.py \
+    --models d3rlpy_logs/DiscreteCQL_V6_20260428_0426_20260428042630/model_*.d3 \
+    --data Final_Project/Data/transitions_v32_C.parquet \
+    --episodes 10 > eval_v32_C_10ep.log 2>&1 &
 ```
 
 ---
 
-## 6) Evaluate — All Checkpoints (Leaderboard)
+## 6) Evaluate — Full Holdout Test (SOTA Performance)
 
-```fish
-env OMP_NUM_THREADS=3 PYTHONPATH="/mnt/WindowsD/Reinforcement Learning/labs/Final_Project/code" \
-nohup ./venv/bin/python ./Final_Project/code/simple-offline.py \
-    --input Final_Project/Data/transitions_discrete_v17.parquet \
-    --evaluate \
-    --eval-all \
-    --model-path d3rlpy_logs/DiscreteCQL_V6_<timestamp>/ \
-    --eval-ratio 0.2 \
-    --limit-eval-episodes 20 \
-    --deadline-penalty 10000.0 \
-    --urgency-beta 10.0 \
-    --urgency-alpha 3.0 \
-    --reward-scale 1.0 \
-    --execution-capacity 200.0 \
-    --arrival-scale 0.5 \
-    --episode-hours 24 \
-    --history-window 3 \
-    --action-col gas_used \
-    --skip-validation \
-    > evaluate_v17.log 2>&1 &
+Khối lệnh này dùng để đánh giá chuyên sâu **150 episodes** (Toàn bộ 20% dữ liệu Test tương lai). Bạn chỉ việc copy nguyên khối này ném vào Terminal. 
 
-tail -f evaluate_v17.log
+*Lưu ý: Nhớ chú ý cờ `--episodes 150` ở cuối lệnh!*
+
+```bash
+nohup env LD_PRELOAD="/opt/intel/oneapi/mkl/2026.0/lib/libmkl_rt.so.3:/usr/lib/libmimalloc.so" \
+    ./venv/bin/python Final_Project/visualize/leaderboard_v28.py \
+    --models \
+        d3rlpy_logs/DiscreteCQL_V6_20260428_0426_20260428042630/model_250000.d3 \
+        d3rlpy_logs/DiscreteCQL_V6_20260428_0426_20260428042630/model_10000.d3 \
+        d3rlpy_logs/DiscreteCQL_V6_20260428_0426_20260428042630/model_210000.d3 \
+        d3rlpy_logs/DiscreteCQL_V6_20260428_0426_20260428042630/model_290000.d3 \
+        d3rlpy_logs/DiscreteCQL_V6_20260428_0426_20260428042630/model_300000.d3 \
+        d3rlpy_logs/DiscreteCQL_V6_20260428_0426_20260428042630/model_140000.d3 \
+        d3rlpy_logs/DiscreteCQL_V6_20260428_0426_20260428042630/model_260000.d3 \
+        d3rlpy_logs/DiscreteCQL_V6_20260428_0426_20260428042630/model_130000.d3 \
+        d3rlpy_logs/DiscreteCQL_V6_20260428_0426_20260428042630/model_170000.d3 \
+        d3rlpy_logs/DiscreteCQL_V6_20260428_0426_20260428042630/model_190000.d3 \
+        d3rlpy_logs/DiscreteCQL_V6_20260428_0426_20260428042630/model_200000.d3 \
+        d3rlpy_logs/DiscreteCQL_V6_20260428_0426_20260428042630/model_160000.d3 \
+        d3rlpy_logs/DiscreteCQL_V6_20260428_0426_20260428042630/model_230000.d3 \
+        d3rlpy_logs/DiscreteCQL_V6_20260428_0426_20260428042630/model_280000.d3 \
+        d3rlpy_logs/DiscreteCQL_V6_20260428_0426_20260428042630/model_120000.d3 \
+    --data Final_Project/Data/transitions_v32_C.parquet \
+    --episodes 250 > eval_v32_C_top15_full_holdout.log 2>&1 &
 ```
+tail -f evaluate_v17.log
 
 ---
 

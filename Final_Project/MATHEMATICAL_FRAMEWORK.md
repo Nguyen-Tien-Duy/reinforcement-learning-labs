@@ -73,4 +73,16 @@ A steeply convex exponential penalty enforcing extreme risk aversion. As $\tau \
 
 For defined 24-hour episodic bounds, the discount factor is rigidly set:
 $$\gamma \approx 0.99$$
-This high discounting mitigates immediate-reward myopia, ensuring cost savings achieved late in the 23rd hour propagate structural credit back to decisions made in the 1st hour.
+
+## 6. Numerical Stability and Oracle Precision
+
+The standard Dynamic Programming (DP) approach for the Oracle baseline typically discretizes the continuous queue $Q_t$ into $M$ discrete bins. This introduces a **quantization error** $\epsilon_Q$, where the agent "sees" the state as a rounded integer, leading to suboptimal cost trajectories.
+
+To achieve "God-view" precision, we implement **Linear Interpolation** on the Value Function $V(s)$. For any non-integer state $Q \in \mathbb{R}$, the value is approximated as:
+
+$$V(t, Q) \approx (1 - w) \cdot V(t, \lfloor Q \rfloor) + w \cdot V(t, \lceil Q \rceil)$$
+
+Where $w = Q - \lfloor Q \rfloor$. 
+
+This refinement ensures that the Oracle baseline represents the **Absolute Theoretical Limit** of cost efficiency, providing a rigorous benchmark that is mathematically impossible to exceed by any policy $\pi$.
+

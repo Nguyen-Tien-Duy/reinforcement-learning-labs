@@ -7,7 +7,7 @@ from dataclasses import dataclass
 class TransitionBuildConfig:
     # --- CANONICAL PHYSICS (Locked Source of Truth) ---
     arrival_scale: float = 0.1          # 10% of mainnet traffic as per user request
-    deadline_penalty: float = 20000.0     # V24: Certified Smart+ Optimal Penalty
+    deadline_penalty: float = 1000000.0   # V33: Synced with L2_Batching Oracle build
     episode_hours: int = 24             # Fixed 24h window
     history_window: int = 3             # 3-step gas history
     
@@ -30,8 +30,8 @@ class TransitionBuildConfig:
     # --- ECONOMICS & URGENCY ---
     gas_reference_window: int = 128
     normalize_state: bool = False        # Forced TRUE for strict pipeline
-    urgency_alpha: float = 3.5          # Exponential curve steepness
-    urgency_beta: float = 0.0005          # V25: Certified Smart++ Optimal Urgency
+    urgency_alpha: float = 1.0          # Exponential curve steepness
+    urgency_beta: float = 0.0001          # V25: Certified Smart++ Optimal Urgency
     reward_scale: float = 1.0           # Baseline scale (Alpha handling in Model)
 
     # --- DISCRETE ACTION SPACE (V6) ---
