@@ -1,20 +1,26 @@
-\chapter{Giới thiệu}
+\chapter*{Giới thiệu}
+\addcontentsline{toc}{chapter}{Giới thiệu}
 
-\section{Bối cảnh và Động lực}
+\section*{Bối cảnh và Động lực}
+\addcontentsline{toc}{section}{Bối cảnh và Động lực}
 
-Blockchain Ethereum là một nền tảng hợp đồng thông minh phi tập trung, nơi mỗi giao dịch đều phải trả một khoản phí gọi là \textit{gas fee}. Phí này dao động liên tục theo thời gian thực, phụ thuộc vào mức độ tắc nghẽn mạng (network congestion). Trong những giờ cao điểm, chi phí gas có thể tăng gấp nhiều lần so với mức trung bình, gây ra tổn thất đáng kể cho các tổ chức và doanh nghiệp cần xử lý khối lượng giao dịch lớn định kỳ (ví dụ: các hệ thống thanh toán, sàn giao dịch phi tập trung, hoặc các ứng dụng DeFi).
+Blockchain Ethereum là một nền tảng hợp đồng thông minh phi tập trung, nơi mỗi giao dịch đều phải trả một khoản phí gọi là \textit{gas fee} \cite{ethereum2022eip1559, jang2026deep}. Phí này dao động liên tục theo thời gian thực, phụ thuộc vào mức độ tắc nghẽn mạng (network congestion). Trong những giờ cao điểm, chi phí gas có thể tăng gấp nhiều lần so với mức trung bình, gây ra tổn thất đáng kể cho các tổ chức và doanh nghiệp cần xử lý khối lượng giao dịch lớn định kỳ (ví dụ: các hệ thống thanh toán, sàn giao dịch phi tập trung, hoặc các ứng dụng DeFi).
 
 Bài toán đặt ra là: \textit{Tại mỗi thời điểm, nên quyết định gửi bao nhiêu giao dịch} (trong tổng số các giao dịch đang chờ xử lý) để đồng thời: (1) tối thiểu hóa tổng chi phí gas, và (2) không vi phạm ràng buộc về thời hạn (deadline) — tức là đảm bảo tất cả giao dịch được hoàn tất trước khi hết hạn.
 
-\section{Phạm vi Đề tài}
+\section*{Phạm vi Đề tài}
+\addcontentsline{toc}{section}{Phạm vi Đề tài}
 
 Đề tài này xây dựng một \textbf{hệ thống quyết định tự động} sử dụng \textbf{Offline Reinforcement Learning (Offline RL)} để giải quyết bài toán trên. Điểm đặc thù của Offline RL là agent học hoàn toàn từ \textit{dữ liệu lịch sử} (không tương tác trực tiếp với môi trường thật), phù hợp với ngữ cảnh blockchain nơi việc thử và sai trong môi trường thực là cực kỳ tốn kém.
 
-\section{Đóng góp Chính}
+\section*{Đóng góp của Đề tài}
+\addcontentsline{toc}{section}{Đóng góp của Đề tài}
+
+Đề tài này mang lại những đóng góp quan trọng cả về mặt lý thuyết lẫn thực tiễn trong lĩnh vực ứng dụng Trí tuệ Nhân tạo vào tối ưu hóa tài chính phi tập trung (DeFi):
 
 \begin{itemize}
-    \item Xây dựng pipeline xử lý dữ liệu thô Ethereum thành tập \textit{transition dataset} phục vụ Offline RL.
-    \item Thiết kế \textbf{Hindsight Oracle} — bộ giải Quy hoạch Động (Dynamic Programming) biết trước giá gas trong tương lai — để tạo ra các quỹ đạo tối ưu làm nhãn huấn luyện.
-    \item Chuyển đổi không gian hành động từ liên tục sang \textbf{rời rạc (5 bins)} nhằm giải quyết vấn đề phân phối hành động sụp đổ (policy collapse) trong IQL liên tục.
-    \item Huấn luyện và đánh giá agent \textbf{Discrete CQL (Conservative Q-Learning)} trên tập dữ liệu thực tế từ Ethereum Mainnet (2024--2026).
+    \item \textbf{Khung lý thuyết về Bất đối xứng Rủi ro - Lợi nhuận (Risk-Reward Asymmetry):} Đề xuất mô hình toán học giải thích hiện tượng sụp đổ (Pessimistic Collapse) của các thuật toán RL tiêu chuẩn khi đối mặt với hình phạt quá lớn, và tầm quan trọng của kỹ thuật Reward Shaping \cite{ng1999policy}.
+    \item \textbf{Phân tích rào cản của Conditional Behavioral Cloning:} Chứng minh sự thất bại của thuật toán tân tiến Decision Transformer (DT) \cite{chen2021decision} trong môi trường phân bố hành động lệch (Majority Bias), so sánh với khả năng ghép quỹ đạo (Trajectory Stitching) của Q-Learning.
+    \item \textbf{Phát triển Hệ thống Lai (Hybrid Safe-RL System):} Kết hợp thuật toán \textbf{Discrete CQL} với một \textbf{Safety Layer} (Quy tắc an toàn vật lý), đảm bảo mô hình có thể khai thác tối đa biến động giá Gas mà vẫn giữ rủi ro ở mức 0\%.
+    \item \textbf{Đạt hiệu năng Vượt trội:} Thực nghiệm trên 8 tháng dữ liệu thực tế từ Ethereum Mainnet (4.6 triệu transitions) chứng minh hệ thống tiết kiệm được \textbf{11.1\% chi phí Gas} so với chiến lược Greedy truyền thống, mà vẫn đảm bảo an toàn tuyệt đối (\textbf{0\% Deadline Miss Rate}).
 \end{itemize}

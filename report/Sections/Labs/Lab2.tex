@@ -42,10 +42,30 @@ Trong thí nghiệm này, cả hai thuật toán được huấn luyện trong 8
 
 \textbf{Phân tích đồ thị:}
 \begin{itemize}
-    \item \textbf{Môi trường Non-Slippery (Dễ):} Cả Q-learning và SARSA đều hội tụ rất nhanh về mức Reward $\approx 1.0$ (tỉ lệ thắng gần 100\%). Điều này dễ hiểu vì không có yếu tố ngẫu nhiên, Agent chỉ cần tìm được đường ngắn nhất.
-    \item \textbf{Môi trường Slippery (Khó):} Tốc độ hội tụ chậm hơn đáng kể. Cả hai thuật toán đạt mức Reward ổn định khoảng $0.72 - 0.74$. 
-    \item \textbf{So sánh Q-learning và SARSA:} Trong môi trường FrozenLake cơ bản này, sự khác biệt về Reward cuối cùng giữa hai thuật toán là không quá lớn. Tuy nhiên, SARSA thường có xu hướng ổn định hơn trong giai đoạn đầu huấn luyện vì nó tính đến cả rủi ro của các hành động khám phá ngẫu nhiên.
+    \item \textbf{Môi trường Non-Slippery (Dễ):} Cả Q-learning và SARSA hội tụ rất nhanh về mức Reward $\approx 1.0$ (tỉ lệ thắng gần 100\%). Vì không có yếu tố ngẫu nhiên, Agent chỉ cần học một lần đường đi ngắn nhất là luôn thắng.
+
+    \item \textbf{Môi trường Slippery (Khó) — Tại sao chỉ đạt $\approx 0.72$ mà không lên 1.0?}
+    Đây là giới hạn vật lý của môi trường, không phải lỗi của thuật toán. Khi \texttt{is\_slippery=True}, mỗi hành động của Agent chỉ có xác suất $\frac{1}{3}$ đi đúng hướng mong muốn; $\frac{2}{3}$ còn lại sẽ trượt sang hai hướng vuông góc một cách ngẫu nhiên. Dù Agent đã học được Policy tối ưu tuyệt đối (biết rõ nên đi hướng nào), nó vẫn không thể kiểm soát được kết quả vật lý. Do đó, tỉ lệ thắng tối đa về mặt lý thuyết bị giới hạn bởi xác suất ngẫu nhiên của môi trường, và mức $\approx 0.72-0.74$ là kết quả hợp lý với cấu hình lưới $4 \times 4$ này.
+
+    \item \textbf{Tại sao Reward vẫn dao động sau khi hội tụ?}
+    Dù thuật toán đã tìm ra Policy tốt nhất, đường Reward vẫn lên xuống liên tục vì hai lý do: (1) \textbf{Epsilon còn dư:} Trong giai đoạn sau, $\epsilon$ đã giảm rất nhỏ (về 0.001) nhưng vẫn chưa bằng 0, Agent thỉnh thoảng vẫn chọn hành động ngẫu nhiên và rơi vào hố; (2) \textbf{Nhiễu từ bản chất Slippery:} Ngay cả khi chọn đúng hành động, vẫn có $\frac{2}{3}$ xác suất trượt sai hướng — đây là nguồn nhiễu cố hữu không thể loại bỏ.
+
+    \item \textbf{So sánh Q-learning và SARSA:} Trong môi trường Non-Slippery, cả hai cho kết quả tương đương. Trong môi trường Slippery, SARSA tuy đạt Reward cuối thấp hơn một chút so với Q-learning, nhưng lại có đường học ổn định hơn vì nó cập nhật Q-value dựa trên hành động thực tế (bao gồm cả các bước trượt ngẫu nhiên), nên Policy của SARSA tự nhiên tránh những vị trí có rủi ro cao.
 \end{itemize}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lcc}
+\toprule
+\textbf{Thuật toán} & \textbf{Win Rate (Non-Slippery)} & \textbf{Win Rate (Slippery)} \\
+\midrule
+Q-Learning (Off-policy) & $\approx 100\%$ & $\approx 74\%$ \\
+SARSA (On-policy)        & $\approx 100\%$ & $\approx 72\%$ \\
+\bottomrule
+\end{tabular}
+\caption{Tổng hợp Win Rate sau 80,000 episodes huấn luyện}
+\label{tab:lab2_results}
+\end{table}
 
 \section{Trả lời câu hỏi lý thuyết}
 

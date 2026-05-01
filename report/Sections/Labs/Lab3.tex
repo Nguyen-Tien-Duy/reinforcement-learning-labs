@@ -17,6 +17,13 @@ Chúng ta triển khai thuật toán TD(0) để học giá trị trạng thái 
     \label{fig:lab3_td}
 \end{figure}
 
+\textbf{Nhận xét đồ thị (Hình \ref{fig:lab3_td}):}
+\begin{itemize}
+    \item \textbf{Đồ thị RMSE (trái) — Tốc độ học:} TD(0) có đường RMSE giảm nhanh và mượt mà hơn rõ rệt so với Monte Carlo trong các episode đầu tiên. Đây là hệ quả trực tiếp của Bootstrapping: TD(0) cập nhật $V(s)$ ngay sau mỗi bước đi (không cần chờ episode kết thúc), nên thông tin lan truyền nhanh hơn gấp nhiều lần so với MC vốn phải đợi đến cuối episode mới cập nhật toàn bộ.
+    \item \textbf{Đồ thị RMSE (trái) — Mức nhiễu hội tụ:} Ở giai đoạn cuối, cả hai đều ổn định nhưng MC dao động nhiều hơn TD(0). Nguyên nhân là Variance của MC cao (tích lũy nhiễu từ toàn bộ chuỗi phần thưởng $G_t$), còn TD(0) chỉ phụ thuộc vào 1 bước nhiễu duy nhất ($r + \gamma V(s')$).
+    \item \textbf{Đồ thị ổn định (phải):} Giá trị $V(s)$ của TD(0) ổn định quanh một mức nhất quán ngay từ sớm. Trong khi đó, Monte Carlo có biên độ dao động lớn hơn đáng kể vì mỗi episode lại cho một tổng thưởng $G_t$ khác nhau tùy vào kết quả ngẫu nhiên của toàn bộ chuỗi hành động.
+\end{itemize}
+
 \textbf{Trả lời câu hỏi lý thuyết:}
 \begin{enumerate}
     \item \textbf{Bootstrapping là gì?} Là việc cập nhật một ước lượng dựa trên các ước lượng khác có sẵn. TD không cần đợi hết episode vì nó sử dụng giá trị ước lượng của trạng thái kế tiếp ($V(s')$) để cập nhật trạng thái hiện tại.
@@ -51,6 +58,13 @@ Chúng ta triển khai n-step Q-learning để trung hòa ưu nhược điểm c
     \label{fig:lab3_nstep}
 \end{figure}
 
+\textbf{Nhận xét đồ thị (Hình \ref{fig:lab3_nstep}):}
+\begin{itemize}
+    \item \textbf{$n=1$ (TD thuần):} Đường Reward tăng chậm nhất. Vì mỗi bước cập nhật chỉ mang thông tin từ 1 phần thưởng tức thời $r_{t+1}$, tín hiệu học bị yếu và thông tin về đích phải lan truyền qua rất nhiều bước mới đến được các trạng thái ở xa — đây chính là hiện tượng Credit Assignment khó khăn.
+    \item \textbf{$n=3$ và $n=5$ (n-step):} Đường Reward hội tụ nhanh hơn đáng kể và đạt mức cao hơn sớm hơn. Bằng cách tích lũy $n$ phần thưởng thực tế trước khi Bootstrapping, mỗi bước cập nhật mang thông tin phong phú hơn (giảm Bias so với $n=1$), giúp tín hiệu đích lan truyền nhanh hơn nhiều bước trong một lần cập nhật.
+    \item \textbf{Tại sao không tăng n lên vô hạn?} Khi $n$ quá lớn, thuật toán tiến dần về Monte Carlo với Variance rất cao — đường Reward trở nên dao động mạnh và mất ổn định. Giá trị $n$ tối ưu là sự thỏa hiệp (Trade-off) giữa Bias thấp ($n$ lớn) và Variance thấp ($n$ nhỏ), thường nằm trong khoảng $n = 3 \sim 5$ với môi trường CartPole.
+\end{itemize}
+
 \textbf{Trả lời câu hỏi lý thuyết:}
 \begin{enumerate}
     \item \textbf{Ý tưởng chính:} Học từ $n$ bước phần thưởng thực tế trước khi thực hiện bootstrapping, giúp giảm bias so với TD(0) và giảm variance so với MC.
@@ -79,6 +93,19 @@ Triển khai mạng Neural Network (Deep Q-Network - DQN) sử dụng PyTorch đ
     \caption{Đồ thị Reward và Loss của mô hình DQN trên CartPole-v1}
     \label{fig:lab3_dqn}
 \end{figure}
+
+\textbf{Nhận xét đồ thị:}
+Quan sát đồ thị Reward (trái) và Loss (phải), ta thấy cả hai đều có xu hướng dao động mạnh (oscillation) thay vì tăng/giảm đơn điệu và ổn định. Đây là hiện tượng đặc trưng của DQN và xuất phát từ sự tương tác của ba yếu tố chính:
+
+\begin{itemize}
+    \item \textbf{Replay Buffer gây tương quan dữ liệu (Correlated Samples):} Replay Buffer lưu lại các bộ $(s, a, r, s')$ từ các episode trước. Ở giai đoạn đầu, buffer chứa phần lớn các mẫu từ Policy kém (Agent chưa biết gì), khiến mạng liên tục học trên dữ liệu chất lượng thấp và Reward không thể tăng ổn định. Khi Policy được cải thiện và buffer dần được lấp đầy bằng các mẫu tốt hơn, Reward mới có xu hướng tăng dần. Tuy nhiên, nếu một mini-batch ngẫu nhiên lấy trúng nhóm mẫu xấu cũ, Reward lại tụt xuống ngay lập tức.
+
+    \item \textbf{Learning Rate ($\alpha$) tạo dao động quanh điểm tối ưu:} Learning Rate kiểm soát bước nhảy của Gradient Descent. Nếu $\alpha$ quá lớn, mỗi bước cập nhật trọng số sẽ vượt qua điểm tối ưu (overshoot), khiến Loss không giảm mà còn có thể tăng trở lại ở bước tiếp theo. Trong đồ thị Loss (phải), các đột biến tăng vọt bất thường chính là biểu hiện của hiện tượng overshoot này. Về mặt toán học, đây chính là sự bất ổn định của Gradient Descent khi bước nhảy quá lớn so với độ cong (curvature) của hàm Loss.
+
+    \item \textbf{Batch Size nhỏ làm tăng Gradient Noise:} Mỗi lần cập nhật mạng, ta chỉ lấy một mini-batch nhỏ (ví dụ 64 mẫu) thay vì toàn bộ dữ liệu. Gradient tính được từ 64 mẫu là một \textbf{ước lượng nhiễu} (noisy estimate) của Gradient thực. Điều này khiến hướng cập nhật trọng số không hoàn toàn chính xác ở mỗi bước, dẫn đến quỹ đạo học "lắc lư" xung quanh điểm hội tụ thay vì đi thẳng vào đó.
+\end{itemize}
+
+\textbf{Xu hướng tổng thể:} Mặc dù dao động mạnh ở từng episode, đường Reward trung bình (moving average) vẫn có xu hướng \textbf{tăng dần theo thời gian}, chứng tỏ mạng DQN vẫn đang học được Policy tốt hơn. Tương tự, đường Loss tuy có nhiều đột biến cục bộ nhưng nhìn tổng thể vẫn có xu hướng \textbf{ổn định ở mức thấp hơn}, đặc biệt ở các episode cuối — đây là dấu hiệu của quá trình hội tụ thành công.
 
 \textbf{Trả lời câu hỏi lý thuyết:}
 \begin{enumerate}

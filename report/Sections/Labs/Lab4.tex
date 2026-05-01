@@ -52,7 +52,7 @@ Cơ chế Experience Replay lưu trữ bộ $(s, a, r, s', done)$ vào một Buf
 \end{enumerate}
 
 \section{Kết quả thực nghiệm và Phân tích}
-Trong bài Lab này, chúng ta đã triển khai **Double DQN** kết hợp với **Soft Update** ($\tau = 0.001$). Kết quả cho thấy Agent đạt mức điểm tối đa 500/500 chỉ sau khoảng 400-600 episodes.
+Trong bài Lab này, chúng ta đã triển khai \textbf{Double DQN} kết hợp với \textbf{Soft Update} ($\tau = 0.001$). Kết quả cho thấy Agent đạt mức điểm tối đa 500/500 chỉ sau khoảng 400-600 episodes.
 
 \begin{figure}[H]
     \centering
@@ -60,6 +60,19 @@ Trong bài Lab này, chúng ta đã triển khai **Double DQN** kết hợp vớ
     \caption{Learning Curve của DQN trên môi trường CartPole-v1}
     \label{fig:lab4_reward}
 \end{figure}
+
+\textbf{Nhận xét đồ thị (Hình \ref{fig:lab4_reward}):}
+\begin{itemize}
+    \item \textbf{Tốc độ hội tụ:} Agent đạt mức Reward tối đa 500/500 điểm chỉ sau khoảng 400-600 episodes. Đây là kết quả vượt trội so với DQN thông thường ở Lab 3, nơi Reward dao động liên tục và không ổn định xuyên suốt quá trình huấn luyện.
+
+    \item \textbf{Tại sao ổn định hơn Lab 3? — Vai trò của Double DQN:}
+    DQN thông thường dùng cùng một mạng để vừa \textit{chọn hành động} vừa \textit{định giá trị}, dẫn đến Overestimation Bias (đánh giá quá cao các Q-value nhiễu). Double DQN tách hai nhiệm vụ này: mạng \textbf{Local} chọn hành động ($\arg\max$), còn mạng \textbf{Target} định giá trị cho hành động đó. Sự phân tách này triệt tiêu phần lớn Overestimation Bias, khiến các đột biến Loss và Reward giảm đi đáng kể.
+
+    \item \textbf{Tại sao ổn định hơn Lab 3? — Vai trò của Soft Update ($\tau = 0.001$):}
+    Thay vì sao chép nguyên xi trọng số từ mạng Local sang mạng Target sau mỗi $C$ bước (Hard Update), Soft Update chỉ dịch chuyển mạng Target một lượng rất nhỏ ($\theta_{target} \leftarrow \tau \theta_{local} + (1-\tau)\theta_{target}$). Điều này loại bỏ hoàn toàn hiện tượng mục tiêu nhảy vọt đột ngột (moving target problem), khiến Loss giảm đều đặn hơn thay vì bị các đột biến bất thường như Lab 3.
+
+    \item \textbf{Giai đoạn ổn định (Plateau):} Sau khi đạt 500 điểm, đường Reward duy trì ổn định ở mức tối đa mà không bị tụt xuống — đây là bằng chứng cho thấy Policy đã hội tụ thực sự chứ không chỉ là may mắn ngẫu nhiên.
+\end{itemize}
 
 \textbf{Trả lời câu hỏi phân tích:}
 \begin{enumerate}

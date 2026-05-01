@@ -1,0 +1,28 @@
+\chapter*{Kết luận và Hướng phát triển}
+\addcontentsline{toc}{chapter}{Kết luận và Hướng phát triển}
+
+\section*{Kết luận}
+\addcontentsline{toc}{section}{Kết luận}
+
+Đồ án này đã giải quyết thành công bài toán tối ưu hóa chi phí Gas trên mạng lưới Ethereum cho các hệ thống Relayer/L2 Batching thông qua việc ứng dụng Offline Reinforcement Learning. Đi từ những thách thức cốt lõi của một môi trường biến động không ngừng (non-stationary) với yêu cầu khắt khe về thời gian hoàn thành (Zero-Miss SLA), chúng tôi đã rút ra được những kết luận mang tính định lượng và định tính quan trọng:
+
+\begin{enumerate}
+    \item \textbf{Thất bại của thuật toán tiêu chuẩn và Reward Shaping:} Các thuật toán tiên tiến như Decision Transformer (DT) \cite{chen2021decision} thất bại do mắc phải \textit{Majority Bias} khi học trên tập dữ liệu chuyên gia có độ lệch chuẩn cao (70\% thời gian giữ trạng thái chờ). Các thuật toán Q-Learning tiêu chuẩn cũng sụp đổ do \textit{Bất đối xứng Rủi ro - Lợi nhuận} (tỷ lệ 1:223,000) khiến Agent bị phạt quá nặng và chọn cách tích trữ an toàn. Kỹ thuật Reward Shaping \cite{ng1999policy} (giảm Penalty xuống mức hợp lý) là chìa khóa để Agent bắt đầu học được chiến lược "mua ở đáy".
+    
+    \item \textbf{Tầm quan trọng của Data Coverage:} Thông qua phương pháp Đối chứng tự nhiên, chúng tôi chứng minh sự khác biệt nhỏ về phạm vi dữ liệu hàng đợi (Queue State Coverage) có thể tạo ra tác động khổng lồ, làm thay đổi hiệu năng lên tới 40\%. Điều này tái khẳng định lý thuyết \textit{Distribution Shift} là rào cản lớn nhất của Offline RL.
+    
+    \item \textbf{Kiến trúc Hệ thống Lai (Safe RL) là chuẩn mực thực tiễn:} Mặc dù mô hình AI (Discrete CQL) có khả năng tối ưu rất tốt, việc bàn giao 100\% quyền quyết định cho Neural Network trong môi trường tài chính rủi ro là không khả thi. Giải pháp đưa ra là Hệ thống Lai (Hybrid System) - giao cho AI 80\% thời gian đầu để "lướt sóng" tối ưu chi phí, và dùng một \textbf{Safety Layer} cứng (Rule-based) để ép bán ở 20\% thời gian cuối. 
+    
+    \item \textbf{Hiệu năng Vượt trội:} Trên tập dữ liệu đánh giá độc lập (Hold-out test) gồm 242 episodes đại diện cho 20\% thời gian cuối, mô hình lai của chúng tôi đã tiết kiệm được \textbf{11.1\% tổng chi phí Gas} so với chiến lược Baseline (Greedy) mà vẫn duy trì \textbf{0.0\% Tỷ lệ Trễ hạn (Miss Rate)}. Con số này chứng tỏ hệ thống đã khai thác được 28.6\% tiềm năng tuyệt đối của bộ giải Hindsight Oracle trong điều kiện không có thông tin tương lai.
+\end{enumerate}
+
+\section*{Hướng phát triển tương lai}
+\addcontentsline{toc}{section}{Hướng phát triển tương lai}
+
+Mặc dù đã đạt được những kết quả rất tích cực, nghiên cứu này vẫn còn những giới hạn mở ra cơ hội cho các nghiên cứu tiếp theo:
+
+\begin{itemize}
+    \item \textbf{Mô hình hóa động lực học của EIP-1559:} Thay vì chỉ dự đoán giá Gas thô, việc tích hợp cấu trúc vi mô của EIP-1559 (như \textit{Base Fee} và \textit{Priority Fee}) làm đặc trưng trạng thái có thể giúp mô hình hiểu sâu hơn về xu hướng mạng lưới.
+    \item \textbf{Ứng dụng Continuous Oracle để ước lượng lại Trần lý thuyết:} Oracle hiện tại bị giới hạn trong không gian rời rạc (5 Bins). Việc tối ưu hóa thuật toán DP để chạy với Continuous Action Space có thể hé lộ một ngưỡng tối ưu sâu hơn mức 38.8\% hiện tại.
+    \item \textbf{Tích hợp Phân tích Dữ liệu Chuỗi thời gian (Time-series Forecasting):} Thay vì chỉ dựa vào Markov Decision Process (chỉ xét một vài trạng thái gần nhất), việc kết hợp một module LSTM hoặc Transformer chuyên dự báo chuỗi thời gian (như Time-Series Momentum) vào Observation Vector có thể tăng độ chính xác của agent trong các cú sốc cung cầu (như NFT drops).
+\end{itemize}
