@@ -73,11 +73,22 @@ SARSA (On-policy)        & $\approx 100\%$ & $\approx 72\%$ \\
 Q-learning học hàm giá trị $Q(s, a)$ bằng cách sử dụng sai số Temporal Difference. Nó được gọi là \textbf{Off-policy} vì quy tắc cập nhật của nó sử dụng giá trị của hành động tốt nhất có thể ($\max Q(s', a')$) để ước lượng phần thưởng tương lai, bất kể hành động thực tế mà Agent thực hiện ở bước tiếp theo là gì (có thể là một hành động ngẫu nhiên do $\epsilon$-greedy).
 
 \subsection{Câu 2: So sánh Q-learning và SARSA}
-Sự khác biệt nằm ở thành phần mục tiêu (target) trong công thức cập nhật:
+Sự khác biệt cốt lõi nằm ở \textbf{bản chất thuật toán} (chu trình thực hiện) và \textbf{thành phần mục tiêu (target)} trong công thức cập nhật:
+
 \begin{itemize}
-    \item \textbf{Q-learning:} Dùng $\max_{a'} Q(s', a')$ - giả định Agent luôn chọn hành động tốt nhất. Điều này giúp nó tìm ra đường đi tối ưu nhanh hơn nhưng có thể mạo hiểm.
-    \item \textbf{SARSA:} Dùng $Q(s', a')$ - với $a'$ là hành động thực tế được chọn bởi chính sách hiện tại. Điều này làm SARSA trở nên "thận trọng" hơn vì nó học được rằng các hành động khám phá có thể dẫn đến kết quả xấu (rơi vào hố).
+    \item \textbf{Q-learning (Off-policy):} 
+    \begin{itemize}
+        \item \textbf{Chu trình:} $s \to a \to r \to s'$. Hệ thống thực hiện cập nhật $Q(s,a)$ ngay khi quan sát được $s'$ bằng cách lấy $\max_{a'} Q(s', a')$. 
+        \item \textbf{Bản chất:} Nó cập nhật dựa trên hành động \textbf{tối ưu giả định} ở tương lai. Hành động kế tiếp thực tế $a_{t+1}$ chỉ được chọn sau khi đã cập nhật xong, và nó không ảnh hưởng đến giá trị target vừa tính.
+    \end{itemize}
+    \item \textbf{SARSA (On-policy):} 
+    \begin{itemize}
+        \item \textbf{Chu trình:} $s \to a \to r \to s' \to a'$. Tên gọi SARSA đại diện cho chuỗi: \textbf{S}tate, \textbf{A}ction, \textbf{R}eward, \textbf{S}tate, \textbf{A}ction. 
+        \item \textbf{Bản chất:} Hệ thống phải chọn hành động kế tiếp $a'$ \textbf{trước} khi thực hiện cập nhật $Q(s,a)$. Giá trị target được tính dựa trên chính hành động thực tế $a'$ đó. Do đó, nếu chính sách có yếu tố khám phá (exploration), SARSA sẽ học được cả rủi ro của những bước đi ngẫu nhiên này.
+    \end{itemize}
 \end{itemize}
+
+\textbf{Tóm lại:} Q-learning học về chính sách tối ưu (Optimal Policy), trong khi SARSA học về chính sách hiện tại (Behavior Policy), giúp nó "thận trọng" hơn trong các môi trường có hình phạt cực đoan.
 
 \subsection{Câu 3: Vai trò của chính sách $\epsilon$-greedy}
 Chính sách này giúp cân bằng giữa \textbf{Exploration} (Khám phá môi trường mới) và \textbf{Exploitation} (Khai thác kiến thức đã học).
@@ -87,7 +98,7 @@ Chính sách này giúp cân bằng giữa \textbf{Exploration} (Khám phá môi
 \end{itemize}
 
 \subsection{Câu 4: Thuật toán nào an toàn hơn?}
-Trong môi trường có tính rủi ro cao, \textbf{SARSA học an toàn hơn}. Vì SARSA là on-policy, nó cập nhật Q-value dựa trên hành động thực tế (bao gồm cả các bước đi ngẫu nhiên). Nếu một đường đi tối ưu nằm ngay sát các hố nguy hiểm, SARSA sẽ nhận thấy rủi ro rơi vào hố khi khám phá và sẽ chọn một đường đi xa hơn nhưng an toàn hơn. Q-learning phớt lờ rủi ro này vì nó luôn giả định sẽ đi tối ưu ở bước sau.
+Trong môi trường có tính rủi ro cao, \textbf{SARSA học an toàn hơn}. Vì SARSA là on-policy, nó cập nhật Q-value dựa trên hành động thực tế (bao gồm cả các bước đi ngẫu nhiên). Nếu một đường đi tối ưu nằm ngay sát các hố nguy hiểm, SARSA sẽ nhận thấy rủi ro rơi vào hố khi khám phá và sẽ chọn một đường đi xa hơn nhưng an toàn hơn. Q-learning phớt lờ rủi ro này vì nó luôn giả định sẽ đi tối ưu ở bước sau - nhưng nó là tối ưu toán học hơn SARSA.
 
 \subsection{Câu 5: Nguyên nhân đồ thị Reward không ổn định}
 Ba nguyên nhân phổ biến và cách khắc phục:
