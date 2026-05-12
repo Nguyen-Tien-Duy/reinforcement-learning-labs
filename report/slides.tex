@@ -241,18 +241,18 @@
 % =====================================================================
 \section{Kết quả}
 
-\begin{frame}{Bảng Xếp Hạng Hiệu Năng — 242 Episodes}
+\begin{frame}{Bảng Xếp Hạng Hiệu Năng — Tập Blind Test (121 Episodes)}
   \begin{table}
     \centering
     \begin{tabular}{llccc}
       \toprule
       \textbf{\#} & \textbf{Chiến lược} & \textbf{Gas Cost $\downarrow$} & \textbf{Miss Rate} & \textbf{vs Greedy} \\
       \midrule
-      1 & \textbf{Oracle (Hindsight DP)} & \textbf{45,096} & \textbf{0.0\%} & $-$38.8\% \\
+      1 & \textbf{Oracle (Hindsight DP)} & \textbf{29,217} & \textbf{0.0\%} & $-$27.6\% \\
       \rowcolor{UTHblue!15}
-      2 & \textbf{CQL + Safety 20\%} & \textbf{65,525} & \textbf{0.0\%} & \textbf{$-$11.1\%} \\
-      3 & Greedy (Baseline) & 73,710 & 0.0\% & --- \\
-      4 & Smart Rule + Safety & 76,892 & 0.0\% & $+$4.3\% \\
+      2 & \textbf{CQL + Safety 20\%} & \textbf{36,494} & \textbf{0.0\%} & \textbf{$-$9.5\%} \\
+      3 & Greedy (Baseline) & 40,331 & 0.0\% & --- \\
+      4 & Random (Baseline - No Safety) & 40,631 & 81.0\% & $+$0.7\% \\
       5 & Decision Transformer & $>$100K & 90--100\% & Thất bại \\
       \bottomrule
     \end{tabular}
@@ -261,16 +261,16 @@
   \vspace{0.5em}
   \begin{columns}[T]
     \begin{column}{0.48\textwidth}
-      \begin{alertblock}{Kết quả chính}
-        Tiết kiệm \textbf{11.1\% Gas} so với Greedy\\
+      \begin{alertblock}{Kết quả chính (Blind Test)}
+        Tiết kiệm \textbf{9.5\% Gas} so với Greedy\\
         Miss Rate = \textbf{0.0\%}\\
-        Khai thác \textbf{28.6\%} tiềm năng Oracle
+        Khai thác \textbf{34.4\%} tiềm năng Oracle
       \end{alertblock}
     \end{column}
     \begin{column}{0.48\textwidth}
-      \begin{block}{Win Rate}
-        CQL thắng Greedy trong \textbf{222/242} episodes\\
-        (Win Rate = \textbf{91.7\%})
+      \begin{block}{Tính Ổn Định}
+        Khử hoàn toàn \textbf{Selection Bias} nhờ chia tập Validation/Test\\
+        Đảm bảo an toàn \textbf{100\%}
       \end{block}
     \end{column}
   \end{columns}
@@ -284,12 +284,12 @@
   \begin{columns}[T]
     \begin{column}{0.48\textwidth}
       \begin{itemize}
-        \item CQL khai thác cực mạnh ở episodes có Gas biến động lớn (max savings \textbf{79.7\%})
+        \item CQL khai thác rất tốt ở các episodes có Gas biến động lớn (max savings \textbf{42.2\%})
       \end{itemize}
     \end{column}
     \begin{column}{0.48\textwidth}
       \begin{itemize}
-        \item Khi CQL thua, mức thua rất nhỏ (tối đa $-$0.2\%) $\Rightarrow$ \textbf{Risk thấp}
+        \item Khi CQL thua, mức thua được kiểm soát tốt (tối đa $-$4.5\%) $\Rightarrow$ \textbf{Risk thấp}
       \end{itemize}
     \end{column}
   \end{columns}
@@ -369,7 +369,7 @@
 
   \vspace{0.5em}
   \centering
-  \textit{Đánh đổi: 22.4\% $\to$ 11.1\% savings, nhưng Miss Rate: 0.4\% $\to$ \textbf{0.0\%}}
+  \textit{Đánh đổi: $>24\%$ $\to$ 9.5\% savings, nhưng Miss Rate: trượt $\to$ \textbf{0.0\%}}
 \end{frame}
 
 % =====================================================================
@@ -382,22 +382,22 @@
     \item \textbf{Reward Shaping là chìa khóa:}
     Giảm penalty $50\times$ giúp Agent vượt qua Pessimistic Collapse
 
-    \item \textbf{Data Coverage quyết định:}
-    Sự khác biệt nhỏ về Queue Coverage thay đổi hiệu năng tới 40\%
+    \item \textbf{Risk-Reward Asymmetry:}
+    Tỷ lệ phạt/lợi nhuận 223.000 : 1 buộc Agent phải ưu tiên sự an toàn tuyệt đối.
 
     \item \textbf{Hệ thống Lai = Chuẩn mực thực tiễn:}
     AI 80\% + Safety 20\% $\Rightarrow$ Cân bằng Optimality \& Reliability
 
-    \item \textbf{Hiệu năng vượt trội:}
-    \textbf{11.1\% savings}, \textbf{0\% Miss}, Win Rate \textbf{91.7\%}
+    \item \textbf{Hiệu năng thực tế vững chắc:}
+    Tiết kiệm \textbf{9.5\%}, \textbf{0\% Miss}, Loại bỏ Selection Bias
   \end{enumerate}
 
   \vspace{1em}
   \begin{block}{Hướng phát triển}
     \begin{itemize}
-      \item Tích hợp cấu trúc EIP-1559 (Base Fee + Priority Fee)
-      \item Continuous Oracle $\Rightarrow$ Trần tối ưu sâu hơn
-      \item LSTM/Transformer dự báo chuỗi thời gian
+      \item \textbf{Continuous Action + MILP Oracle:} Tối ưu hóa chính xác đến từng Wei.
+      \item \textbf{Meta-Learning:} Tự động thích nghi với các biến động (Regime shift) của thị trường.
+      \item \textbf{Constrained RL:} Tích hợp trực tiếp ràng buộc an toàn (Safety) vào hàm Loss.
     \end{itemize}
   \end{block}
 \end{frame}
@@ -466,7 +466,7 @@
       \texttt{urgency\_beta} & 0.0001 & 0.0005 & $5\times$ \\
       \texttt{s\_queue} max & 99,006 & 104,135 & Phủ rộng hơn \\
       \midrule
-      \textbf{vs Greedy} & Thua 30\%+ & \textbf{Thắng 11.1\%} & \\
+      \textbf{vs Greedy} & Thua 30\%+ & \textbf{Thắng 9.5\%} & \\
       \bottomrule
     \end{tabular}
   \end{table}

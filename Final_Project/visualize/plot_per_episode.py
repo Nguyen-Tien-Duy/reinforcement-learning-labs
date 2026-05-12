@@ -44,7 +44,7 @@ def main():
     parser.add_argument("--data",
                         default="Final_Project/Data/transitions_v33_L2_Batching_RAW.parquet")
     parser.add_argument("--model",
-                        default="d3rlpy_logs/DiscreteCQL_V6_20260428_0426_20260428042630/model_160000.d3")
+                        default="d3rlpy_logs/DiscreteCQL_V6_20260428_0426_20260428042630/model_40000.d3")
     parser.add_argument("--output",
                         default="report/Images/06_per_episode_comparison.png")
     args = parser.parse_args()
@@ -52,7 +52,8 @@ def main():
     config = TransitionBuildConfig()
     df = pd.read_parquet(args.data)
     unique_eps = sorted(df["episode_id"].unique())
-    test_ids = unique_eps[int(len(unique_eps) * 0.8):]
+    base_test_ids = unique_eps[int(len(unique_eps) * 0.8):]
+    test_ids = base_test_ids[len(base_test_ids) // 2:]
     ep_list = [d.reset_index(drop=True)
                for _, d in df[df["episode_id"].isin(test_ids)].groupby("episode_id")]
     del df
@@ -97,7 +98,7 @@ def main():
     # ── Plot ──
     fig, axes = plt.subplots(1, 2, figsize=(16, 7))
     fig.suptitle("CQL + Safety 20% vs Greedy — Per-Episode Analysis "
-                 f"({len(ep_list)} eps)",
+                 f"(Blind Test - {len(ep_list)} eps)",
                  fontsize=14, color=TEXT, fontweight="bold")
 
     # Scatter

@@ -23,7 +23,7 @@ from tabulate import tabulate
 if multiprocessing.get_start_method(allow_none=True) is None:
     multiprocessing.set_start_method("spawn")
 
-def evaluate_policy(ep_list, policy_func, config, mins, maxs, is_oracle=False, model_name=""):
+def evaluate_policy(ep_list, policy_func, config, mins, maxs, is_oracle=False, model_name="", use_safety=True):
     """Giả lập vật lý - Đã được tối ưu tốc độ"""
     all_costs = []
     all_pure_gas = []
@@ -53,11 +53,16 @@ def evaluate_policy(ep_list, policy_func, config, mins, maxs, is_oracle=False, m
             if is_oracle:
                 action = env.expert_actions[min(env.current_step, len(env.expert_actions)-1)]
             else:
-                # Ép về C-contiguous để CPU prefetch nhanh nhất
-                obs_contiguous = np.ascontiguousarray(obs.reshape(1, -1), dtype=np.float32)
-                res = policy_func(obs_contiguous)
-                # Xử lý cả trường hợp trả về mảng (d3rlpy) hoặc trả về số nguyên (baseline)
-                action = int(res[0] if isinstance(res, (list, np.ndarray)) else res)
+                # --- THÊM SAFETY LAYER ---
+                time_ratio = env.time_to_deadline / config.episode_hours
+                if use_safety and time_ratio < 0.20:
+                    action = config.n_action_bins - 1 # Ép xả 100% (Greedy)
+                else:
+                    # Ép về C-contiguous để CPU prefetch nhanh nhất
+                    obs_contiguous = np.ascontiguousarray(obs.reshape(1, -1), dtype=np.float32)
+                    res = policy_func(obs_contiguous)
+                    # Xử lý cả trường hợp trả về mảng (d3rlpy) hoặc trả về số nguyên (baseline)
+                    action = int(res[0] if isinstance(res, (list, np.ndarray)) else res)
                 
             n_t = config.action_bins[action] * min(env.queue_size, config.execution_capacity)
             obs, reward, terminated, truncated, info = env.step(action)
@@ -102,7 +107,8 @@ def main():
     parser.add_argument("--models", nargs="+")
     parser.add_argument("--data", type=str, default="Final_Project/Data/transitions_discrete_v28.parquet")
     parser.add_argument("--norm", type=str, default="Final_Project/Data/state_norm_params.json")
-    parser.add_argument("--episodes", type=int, default=10) # Mặc định 10 cho nhanh
+    parser.add_argument("--episodes", type=int, default=0, help="Số episode đánh giá (0 = toàn bộ)")
+    parser.add_argument("--split", type=str, choices=["all", "val", "test"], default="all", help="Chia dữ liệu: val (121 ep đầu), test (121 ep sau), all (toàn bộ)")
     args = parser.parse_args()
 
     # 1. NẠP DỮ LIỆU & CẤU HÌNH (MỘT LẦN DUY NHẤT)
@@ -125,13 +131,28 @@ def main():
             break
 
     unique_eps = sorted(df['episode_id'].unique())
-    # ✅ CHÍNH XÁC: Lấy 20% Episodes cuối cùng (Theo thời gian thực tế)
-    test_ids = unique_eps[int(len(unique_eps)*0.8):]
-    selected_ids = test_ids[:args.episodes]
+    # ✅ CHÍNH XÁC: Lấy 20% Episodes cuối cùng (Theo thời gian thực tế) làm tập Base Evaluate
+    base_eval_ids = unique_eps[int(len(unique_eps)*0.8):]
     
-    print(f"[*] Đã trích xuất {len(test_ids)} episodes cho tập Test (20% cuối).")
-    print(f"[*] Sẽ đánh giá trên {len(selected_ids)} episodes. Danh sách Episode ID:")
-    print(f"    {selected_ids}")
+    # --- CHỐNG SELECTION BIAS (HOLD-OUT VALIDATION) ---
+    mid_idx = len(base_eval_ids) // 2
+    if args.split == "val":
+        test_ids = base_eval_ids[:mid_idx]
+        print(f"\n[🔥] CHẾ ĐỘ VALIDATION: Đang dùng {len(test_ids)} episodes đầu tiên.")
+        print("     -> MỤC ĐÍCH: So sánh các model với nhau để chọn ra model đỉnh nhất.")
+    elif args.split == "test":
+        test_ids = base_eval_ids[mid_idx:]
+        print(f"\n[🚀] CHẾ ĐỘ TEST (BLIND TEST): Đang dùng {len(test_ids)} episodes cuối cùng.")
+        print("     -> MỤC ĐÍCH: Chỉ chạy DUY NHẤT model đã chọn để chốt số liệu báo cáo luận văn!")
+    else:
+        test_ids = base_eval_ids
+        print(f"\n[⚠️] CHẾ ĐỘ ALL: Đang dùng toàn bộ {len(test_ids)} episodes.")
+        print("     -> CẢNH BÁO: Rất dễ bị dính Selection Bias nếu bạn dùng kết quả này để chọn model.")
+        
+    num_to_eval = args.episodes if args.episodes > 0 else len(test_ids)
+    selected_ids = test_ids[:num_to_eval]
+    
+    print(f"\n[*] Sẽ tiến hành đánh giá trên {num_to_eval} episodes...")
     
     # Chỉ bốc đúng số lượng episode cần test để tiết kiệm RAM
     ep_list = [d.reset_index(drop=True) for _, d in list(df[df['episode_id'].isin(selected_ids)].groupby('episode_id'))]
@@ -142,12 +163,12 @@ def main():
     # 2. CHẠY BASELINES
     print("[+] Đang chạy Baselines (Greedy, Random & Oracle)...")
     
-    c_g, m_g, g_g, p_g, e_g, mt_g = evaluate_policy(ep_list, lambda x: config.n_action_bins - 1, config, mins, maxs)
+    c_g, m_g, g_g, p_g, e_g, mt_g = evaluate_policy(ep_list, lambda x: config.n_action_bins - 1, config, mins, maxs, use_safety=False)
     gas_tx_g = (g_g * len(ep_list)) / e_g if e_g > 0 else 0
     print(f"✅ XONG BASELINE: Greedy (Bán Ngay) | Chi phí: {c_g:,.0f} | Gas: {g_g:,.0f} | Phạt: {p_g:,.0f} | Trễ: {m_g:.1f}%")
     results.append(["Greedy (Bán Ngay)", f"{c_g:,.0f}", f"{g_g:,.0f}", f"{p_g:,.0f}", f"{m_g:.1f}%", "-", f"{e_g:,.0f}", f"{gas_tx_g:,.2f}", "0.0%"])
 
-    c_r, m_r, g_r, p_r, e_r, mt_r = evaluate_policy(ep_list, lambda x: np.random.randint(0, config.n_action_bins), config, mins, maxs)
+    c_r, m_r, g_r, p_r, e_r, mt_r = evaluate_policy(ep_list, lambda x: np.random.randint(0, config.n_action_bins), config, mins, maxs, use_safety=False)
     gas_tx_r = (g_r * len(ep_list)) / e_r if e_r > 0 else 0
     savings_r = ((gas_tx_g - gas_tx_r) / gas_tx_g) * 100 if gas_tx_g > 0 else 0
     print(f"✅ XONG BASELINE: Random | Chi phí: {c_r:,.0f} | Gas: {g_r:,.0f} | Phạt: {p_r:,.0f} | Trễ: {m_r:.1f}%")

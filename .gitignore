@@ -9,6 +9,7 @@
 **/output/
 **/results/
 **/good_models/
+/eth-gas-rl/
 
 
 # Ignore common LaTeX generated files

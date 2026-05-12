@@ -3,7 +3,7 @@ import pandas as pd
 import gymnasium as gym
 from gymnasium import spaces
 from .config import TransitionBuildConfig
-import json
+
 
 class CharityGasEnv(gym.Env):
     metadata = {"render_modes": ["human"]}

@@ -1,189 +1,205 @@
-import pandas as pd
-import json
-import numpy as np
-import d3rlpy
-import torch
-import argparse
-import psutil
-import os
-import concurrent.futures
-import multiprocessing
-from pathlib import Path
-import sys
+# import pandas as pd
+# import json
+# import numpy as np
+# import d3rlpy
+# import torch
+# import argparse
+# import psutil
+# import os
+# import concurrent.futures
+# import multiprocessing
+# from pathlib import Path
+# import sys
 
-# Tự động thêm đường dẫn để tìm thấy module utils
-sys.path.append(os.path.abspath("Final_Project/code"))
+# # Tự động thêm đường dẫn để tìm thấy module utils
+# sys.path.append(os.path.abspath("Final_Project/code"))
 
-from utils.offline_rl.enviroment import CharityGasEnv
-from utils.offline_rl.config import TransitionBuildConfig
-from tabulate import tabulate
+# from utils.offline_rl.enviroment import CharityGasEnv
+# from utils.offline_rl.config import TransitionBuildConfig
+# from tabulate import tabulate
 
-# Đảm bảo dùng SPAWN cho CUDA
-if multiprocessing.get_start_method(allow_none=True) is None:
-    multiprocessing.set_start_method("spawn")
+# # Đảm bảo dùng SPAWN cho CUDA
+# if multiprocessing.get_start_method(allow_none=True) is None:
+#     multiprocessing.set_start_method("spawn")
 
-def evaluate_policy_raw(ep_list, algo, config, is_oracle=False):
-    """Giả lập vật lý ở chế độ RAW MODE cho BCQ/CQL"""
-    all_costs = []
-    all_misses = []
+# def evaluate_policy_raw(ep_list, algo, config, is_oracle=False):
+#     """Giả lập vật lý ở chế độ RAW MODE cho BCQ/CQL"""
+#     all_costs = []
+#     all_misses = []
     
-    deadline_penalty = getattr(config, "deadline_penalty", 500)
+#     deadline_penalty = getattr(config, "deadline_penalty", 500)
     
-    for ep_df in ep_list:
-        # Tắt chuẩn hóa ở environment để AI tự dùng scaler nội bộ
-        env = CharityGasEnv(ep_df, config, mins=None, maxs=None)
+#     for ep_df in ep_list:
+#         # Tắt chuẩn hóa ở environment để AI tự dùng scaler nội bộ
+#         env = CharityGasEnv(ep_df, config, mins=None, maxs=None)
         
-        # Hack tốc độ: Gán trực tiếp actions nếu là Oracle
-        if is_oracle:
-            env.expert_actions = ep_df["action"].to_numpy().astype(int)
+#         # Hack tốc độ: Gán trực tiếp actions nếu là Oracle
+#         if is_oracle:
+#             env.expert_actions = ep_df["action"].to_numpy().astype(int)
             
-        obs, _ = env.reset()
-        done = False
-        ep_cost = 0.0
+#         obs, _ = env.reset()
+#         done = False
+#         ep_cost = 0.0
         
-        # [SOTA] Pre-allocate observation buffer for faster inference
-        # Đưa về (1, 11) và đảm bảo liên tục trong bộ nhớ (Memory Alignment)
-        while not done:
-            if is_oracle:
-                action = env.expert_actions[min(env.current_step, len(env.expert_actions)-1)]
-            else:
-                # Đảm bảo C-contiguous để CPU cache prefetcher hoạt động tốt nhất
-                obs_contiguous = np.ascontiguousarray(obs.reshape(1, -1), dtype=np.float32)
-                with torch.no_grad():
-                    res = algo.predict(obs_contiguous)
-                action = int(res[0])
+#         # [SOTA] Pre-allocate observation buffer for faster inference
+#         # Đưa về (1, 11) và đảm bảo liên tục trong bộ nhớ (Memory Alignment)
+#         while not done:
+#             if is_oracle:
+#                 action = env.expert_actions[min(env.current_step, len(env.expert_actions)-1)]
+#             else:
+#                 # Đảm bảo C-contiguous để CPU cache prefetcher hoạt động tốt nhất
+#                 obs_contiguous = np.ascontiguousarray(obs.reshape(1, -1), dtype=np.float32)
+#                 with torch.no_grad():
+#                     res = algo.predict(obs_contiguous)
+#                 action = int(res[0])
                 
-            obs, reward, terminated, truncated, info = env.step(action)
-            ep_cost += info.get("cost", 0.0)
+#             obs, reward, terminated, truncated, info = env.step(action)
+#             ep_cost += info.get("cost", 0.0)
             
-            done = terminated or truncated
+#             done = terminated or truncated
             
-        # Cộng penalty nếu trễ hạn (V28 Logic)
-        is_miss = info.get("deadline_miss", False)
-        if is_miss:
-            ep_cost += env.queue_size * deadline_penalty
+#         # Cộng penalty nếu trễ hạn (V28 Logic)
+#         is_miss = info.get("deadline_miss", False)
+#         if is_miss:
+#             ep_cost += env.queue_size * deadline_penalty
             
-        all_costs.append(ep_cost)
-        all_misses.append(1 if is_miss else 0)
+#         all_costs.append(ep_cost)
+#         all_misses.append(1 if is_miss else 0)
         
-    return np.mean(all_costs), np.mean(all_misses) * 100
+#     return np.mean(all_costs), np.mean(all_misses) * 100
 
-def _worker_eval_model(m_path, ep_list, config):
-    device = "cuda:0" if torch.cuda.is_available() else "cpu"
-    try:
-        # Load d3rlpy model
-        algo = d3rlpy.load_learnable(m_path, device=device)
-        cost, miss = evaluate_policy_raw(ep_list, algo, config, is_oracle=False)
+# def _worker_eval_model(m_path, ep_list, config):
+#     device = "cuda:0" if torch.cuda.is_available() else "cpu"
+#     try:
+#         # Load d3rlpy model
+#         algo = d3rlpy.load_learnable(m_path, device=device)
+#         cost, miss = evaluate_policy_raw(ep_list, algo, config, is_oracle=False)
 
-        path_obj = Path(m_path) 
-        display_name = f"{path_obj.parent.name} -> {path_obj.name}"
-        return {"name": display_name, "cost": cost, "miss": miss, "error": None}
-    except Exception as e:
-        path_obj = Path(m_path) 
-        display_name = f"{path_obj.parent.name} -> {path_obj.name}"
-        return {"name": display_name, "cost": 0, "miss": 0, "error": str(e)}
+#         path_obj = Path(m_path) 
+#         display_name = f"{path_obj.parent.name} -> {path_obj.name}"
+#         return {"name": display_name, "cost": cost, "miss": miss, "error": None}
+#     except Exception as e:
+#         path_obj = Path(m_path) 
+#         display_name = f"{path_obj.parent.name} -> {path_obj.name}"
+#         return {"name": display_name, "cost": 0, "miss": 0, "error": str(e)}
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--models", nargs="+")
-    parser.add_argument("--data", type=str, default="Final_Project/Data/transitions_discrete_v28.parquet")
-    parser.add_argument("--episodes", type=int, default=0, help="Số episode đánh giá (0 = toàn bộ tập 20% test)")
-    args = parser.parse_args()
+# def main():
+#     parser = argparse.ArgumentParser()
+#     parser.add_argument("--models", nargs="+")
+#     parser.add_argument("--data", type=str, default="Final_Project/Data/transitions_discrete_v28.parquet")
+#     parser.add_argument("--episodes", type=int, default=0, help="Số episode đánh giá (0 = toàn bộ tập đã chọn)")
+#     parser.add_argument("--split", type=str, choices=["all", "val", "test"], default="all", help="Chia dữ liệu: val (121 ep đầu), test (121 ep sau), all (242 ep)")
+#     args = parser.parse_args()
 
-    # [SOTA] Đảm bảo log được ghi ra file ngay lập tức
-    import sys
-    sys.stdout.reconfigure(line_buffering=True)
+#     # [SOTA] Đảm bảo log được ghi ra file ngay lập tức
+#     import sys
+#     sys.stdout.reconfigure(line_buffering=True)
 
-    # 1. LOAD SETUP
-    print(f"[*] Đang nạp dữ liệu cho BCQ Leaderboard (RAW MODE)...")
-    import dataclasses
-    config_base = TransitionBuildConfig()
-    config = dataclasses.replace(config_base, normalize_state=False)
+#     # 1. LOAD SETUP
+#     print(f"[*] Đang nạp dữ liệu cho BCQ Leaderboard (RAW MODE)...")
+#     import dataclasses
+#     config_base = TransitionBuildConfig()
+#     config = dataclasses.replace(config_base, normalize_state=False)
 
-    df = pd.read_parquet(args.data)
+#     df = pd.read_parquet(args.data)
     
-    # === INVERSE NORMALIZATION (Khôi phục vật lý cho Leaderboard) ===
-    # Dataset Parquet v28 đã được chuẩn hóa [0, 1]. 
-    # Ta phải khôi phục lại giá trị vật lý để nạp vào model d3rlpy (vốn có scaler nội bộ)
-    try:
-        data_dir = Path(args.data).parent
-        with open(data_dir / "state_norm_params.json", "r") as f:
-            params = json.load(f)
-        mins_phys = np.array(params["mins"])
-        max_maxs = np.array(params["maxs"])
+#     # === INVERSE NORMALIZATION (Khôi phục vật lý cho Leaderboard) ===
+#     # Dataset Parquet v28 đã được chuẩn hóa [0, 1]. 
+#     # Ta phải khôi phục lại giá trị vật lý để nạp vào model d3rlpy (vốn có scaler nội bộ)
+#     try:
+#         data_dir = Path(args.data).parent
+#         with open(data_dir / "state_norm_params.json", "r") as f:
+#             params = json.load(f)
+#         mins_phys = np.array(params["mins"])
+#         max_maxs = np.array(params["maxs"])
         
-        from utils.offline_rl.schema import STATE_COLS
-        print(f"[*] Kiểm tra và phục hồi vật lý cho dữ liệu đánh giá...")
-        for i, col in enumerate(STATE_COLS):
-            if col in df.columns:
-                # Chỉ khôi phục nếu dữ liệu đang ở dạng chuẩn hóa [0, 1]
-                # Nếu Max > 1.0 thì khả năng cao đã là dữ liệu vật lý (RAW)
-                if df[col].max() <= 1.01:
-                    df[col] = df[col] * (max_maxs[i] - mins_phys[i]) + mins_phys[i]
-                else:
-                    if i == 0: # Chỉ in log cho cột đầu tiên để tránh spam
-                        print(f"  > Dữ liệu '{col}' có vẻ đã là RAW (Max={df[col].max():.2f}), bỏ qua khôi phục.")
-        print("✅ Xử lý RAW DATA hoàn tất.")
-    except Exception as e:
-        print(f"⚠️ Cảnh báo: Không thể phục hồi vật lý ({e}). Kết quả có thể không chính xác!")
+#         from utils.offline_rl.schema import STATE_COLS
+#         print(f"[*] Kiểm tra và phục hồi vật lý cho dữ liệu đánh giá...")
+#         for i, col in enumerate(STATE_COLS):
+#             if col in df.columns:
+#                 # Chỉ khôi phục nếu dữ liệu đang ở dạng chuẩn hóa [0, 1]
+#                 # Nếu Max > 1.0 thì khả năng cao đã là dữ liệu vật lý (RAW)
+#                 if df[col].max() <= 1.01:
+#                     df[col] = df[col] * (max_maxs[i] - mins_phys[i]) + mins_phys[i]
+#                 else:
+#                     if i == 0: # Chỉ in log cho cột đầu tiên để tránh spam
+#                         print(f"  > Dữ liệu '{col}' có vẻ đã là RAW (Max={df[col].max():.2f}), bỏ qua khôi phục.")
+#         print("✅ Xử lý RAW DATA hoàn tất.")
+#     except Exception as e:
+#         print(f"⚠️ Cảnh báo: Không thể phục hồi vật lý ({e}). Kết quả có thể không chính xác!")
 
-    unique_eps = sorted(df['episode_id'].unique())
-    # [SOTA] Lấy 20% dữ liệu cuối cùng làm tập Test
-    split_idx = int(len(unique_eps) * 0.8)
-    test_ids = unique_eps[split_idx:]
+#     unique_eps = sorted(df['episode_id'].unique())
+#     # [SOTA] Lấy 20% dữ liệu cuối cùng làm tập Test/Validation
+#     split_idx = int(len(unique_eps) * 0.8)
+#     base_eval_ids = unique_eps[split_idx:]
     
-    # Nếu episodes = 0, lấy toàn bộ tập test
-    num_to_eval = args.episodes if args.episodes > 0 else len(test_ids)
-    selected_ids = test_ids[:num_to_eval]
+#     # --- CHỐNG SELECTION BIAS (HOLD-OUT VALIDATION) ---
+#     mid_idx = len(base_eval_ids) // 2
+#     if args.split == "val":
+#         test_ids = base_eval_ids[:mid_idx]
+#         print(f"\n[🔥] CHẾ ĐỘ VALIDATION: Đang dùng {len(test_ids)} episodes đầu tiên.")
+#         print("     -> MỤC ĐÍCH: So sánh các model với nhau để chọn ra model đỉnh nhất.")
+#     elif args.split == "test":
+#         test_ids = base_eval_ids[mid_idx:]
+#         print(f"\n[🚀] CHẾ ĐỘ TEST (BLIND TEST): Đang dùng {len(test_ids)} episodes cuối cùng.")
+#         print("     -> MỤC ĐÍCH: Chỉ chạy DUY NHẤT model đã chọn để chốt số liệu báo cáo luận văn!")
+#     else:
+#         test_ids = base_eval_ids
+#         print(f"\n[⚠️] CHẾ ĐỘ ALL: Đang dùng toàn bộ {len(test_ids)} episodes.")
+#         print("     -> CẢNH BÁO: Rất dễ bị dính Selection Bias nếu bạn dùng kết quả này để chọn model.")
     
-    print(f"[*] Tổng số episodes Test (20%): {len(test_ids)}. Sẽ đánh giá trên {num_to_eval} episodes. Danh sách Episode ID:")
-    print(f"    {selected_ids}")
-
-    ep_list = [d.reset_index(drop=True) for _, d in list(df[df['episode_id'].isin(selected_ids)].groupby('episode_id'))]
-    del df
-
-    # 2. RUN BASELINE ORACLE
-    print(f"[*] Đang chạy Baseline Oracle (trên dữ liệu Vật Lý)...")
-    # Oracle luôn đúng trên dữ liệu vật lý nếu environment config đúng
-    c_o, m_o = evaluate_policy_raw(ep_list, None, config, is_oracle=True)
-    print(f"✅ XONG BASELINE: Oracle | Chi phí: {c_o:,.0f} | Trễ: {m_o:.1f}%")
+#     # Nếu episodes = 0, lấy toàn bộ tập đã phân chia
+#     num_to_eval = args.episodes if args.episodes > 0 else len(test_ids)
+#     selected_ids = test_ids[:num_to_eval]
     
-    results = [["Oracle (Expert)", f"{c_o:,.0f}", f"{m_o:.1f}%"]]
-    expert_cost = c_o
+#     print(f"\n[*] Sẽ tiến hành đánh giá trên {num_to_eval} episodes...")
+#     # print(f"    {selected_ids}") # Ẩn danh sách ID để màn hình console gọn gàng hơn
 
-    # 3. COLLECT MODELS
-    all_model_paths = []
-    if args.models:
-        for m_path in args.models:
-            p = Path(m_path)
-            if p.is_dir():
-                all_model_paths.extend(list(p.glob("model_*.d3")))
-            else:
-                all_model_paths.append(str(p))
+#     ep_list = [d.reset_index(drop=True) for _, d in list(df[df['episode_id'].isin(selected_ids)].groupby('episode_id'))]
+#     del df
 
-    # 4. RUN PARALLEL
-    if all_model_paths:
-        ram_gb = psutil.virtual_memory().available / 1e9
-        max_workers = max(1, min(os.cpu_count() or 1, int(ram_gb // 2.0)))
+#     # 2. RUN BASELINE ORACLE
+#     print(f"[*] Đang chạy Baseline Oracle (trên dữ liệu Vật Lý)...")
+#     # Oracle luôn đúng trên dữ liệu vật lý nếu environment config đúng
+#     c_o, m_o = evaluate_policy_raw(ep_list, None, config, is_oracle=True)
+#     print(f"✅ XONG BASELINE: Oracle | Chi phí: {c_o:,.0f} | Trễ: {m_o:.1f}%")
+    
+#     results = [["Oracle (Expert)", f"{c_o:,.0f}", f"{m_o:.1f}%"]]
+#     expert_cost = c_o
+
+#     # 3. COLLECT MODELS
+#     all_model_paths = []
+#     if args.models:
+#         for m_path in args.models:
+#             p = Path(m_path)
+#             if p.is_dir():
+#                 all_model_paths.extend(list(p.glob("model_*.d3")))
+#             else:
+#                 all_model_paths.append(str(p))
+
+#     # 4. RUN PARALLEL
+#     if all_model_paths:
+#         ram_gb = psutil.virtual_memory().available / 1e9
+#         max_workers = max(1, min(os.cpu_count() or 1, int(ram_gb // 2.0)))
         
-        print(f"[+] Đang đánh giá {len(all_model_paths)} mô hình BCQ ở RAW MODE...")
-        with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
-            futures = [executor.submit(_worker_eval_model, p, ep_list, config) for p in all_model_paths]
-            for future in concurrent.futures.as_completed(futures):
-                res = future.result()
-                if res["error"]:
-                    print(f"❌ Lỗi {res['name']}: {res['error']}")
-                else:
-                    eff = (expert_cost / res["cost"] * 100) if res["cost"] > 0 else 0
-                    print(f"✅ Finish: {res['name']} | Cost: {res['cost']:,.0f} | Trễ: {res['miss']:.1f}%", flush=True)
-                    results.append([res["name"], f"{res['cost']:,.0f}", f"{res['miss']:.1f}%"])
+#         print(f"[+] Đang đánh giá {len(all_model_paths)} mô hình BCQ ở RAW MODE...")
+#         with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
+#             futures = [executor.submit(_worker_eval_model, p, ep_list, config) for p in all_model_paths]
+#             for future in concurrent.futures.as_completed(futures):
+#                 res = future.result()
+#                 if res["error"]:
+#                     print(f"❌ Lỗi {res['name']}: {res['error']}")
+#                 else:
+#                     eff = (expert_cost / res["cost"] * 100) if res["cost"] > 0 else 0
+#                     print(f"✅ Finish: {res['name']} | Cost: {res['cost']:,.0f} | Trễ: {res['miss']:.1f}%", flush=True)
+#                     results.append([res["name"], f"{res['cost']:,.0f}", f"{res['miss']:.1f}%"])
 
-    # 5. PRINT SUMMARY
-    print("\n" + "="*60)
-    print("🏆 BẢNG VÀNG BCQ (RAW MODE - V28)")
-    print("="*60)
-    print(tabulate(results, headers=["Model", "True Cost ↓", "Miss Rate ↓"], tablefmt="github"))
-    print("="*60)
+#     # 5. PRINT SUMMARY
+#     print("\n" + "="*60)
+#     print("🏆 BẢNG VÀNG BCQ (RAW MODE - V28)")
+#     print("="*60)
+#     print(tabulate(results, headers=["Model", "True Cost ↓", "Miss Rate ↓"], tablefmt="github"))
+#     print("="*60)
 
-if __name__ == "__main__":
-    main()
+# if __name__ == "__main__":
+#     main()

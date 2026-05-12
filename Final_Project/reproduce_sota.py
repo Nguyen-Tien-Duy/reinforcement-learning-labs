@@ -22,7 +22,7 @@ from utils.offline_rl.config import TransitionBuildConfig
 DATA_PATH = os.path.join(PROJECT_ROOT, 'Final_Project', 'Data', 'transitions_v33_L2_Batching_RAW.parquet')
 
 # 2. Model Chiến Thắng (SOTA - Huấn luyện với Reward Shaping đúng đắn)
-MODEL_PATH = os.path.join(PROJECT_ROOT, 'd3rlpy_logs', 'DiscreteCQL_V6_20260428_0426_20260428042630', 'model_160000.d3')
+MODEL_PATH = os.path.join(PROJECT_ROOT, 'd3rlpy_logs', 'DiscreteCQL_V6_20260428_0426_20260428042630', 'model_40000.d3')
 
 # 3. Parameters chuẩn hóa trạng thái (Normalization params)
 NORM_PATH = os.path.join(PROJECT_ROOT, 'Final_Project', 'Data', 'state_norm_params.json')
@@ -32,9 +32,10 @@ SAFETY_THRESHOLD = 0.20
 # ======================================================================
 
 def main():
+    model_name = os.path.basename(MODEL_PATH)
     print(f"[{'*'*60}]")
     print("🚀 SCRIPT TÁI LẬP KẾT QUẢ SOTA (STATE-OF-THE-ART)")
-    print("Chiến lược: CQL model_160000 + Safety Layer 20%")
+    print(f"Chiến lược: {model_name} + Safety Layer 20%")
     print(f"[{'*'*60}]\n")
 
     # 1. Kiểm tra sự tồn tại của file
@@ -48,8 +49,10 @@ def main():
     print("⏳ Đang load dữ liệu...")
     df = pd.read_parquet(DATA_PATH)
     unique_eps = sorted(df['episode_id'].unique())
-    # Lấy 20% episodes cuối cùng làm tập test (hold-out)
-    test_ids = unique_eps[int(len(unique_eps) * 0.8):]
+    # Lấy 20% episodes cuối cùng làm tập test chung
+    base_test_ids = unique_eps[int(len(unique_eps) * 0.8):]
+    # Lấy CHÍNH XÁC nửa sau của tập test (Blind Test - giống '--split test')
+    test_ids = base_test_ids[len(base_test_ids) // 2:]
     ep_list = [d.reset_index(drop=True) for _, d in df[df['episode_id'].isin(test_ids)].groupby('episode_id')]
     
     print(f"✅ Đã load {len(ep_list)} episodes Test (Từ ID {test_ids[0]} đến {test_ids[-1]}).")
@@ -120,17 +123,17 @@ def main():
     savings_pct = ((mean_greedy - mean_cql) / mean_greedy) * 100
 
     print(f"\n[{'='*60}]")
-    print(f"🏆 KẾT QUẢ CUỐI CÙNG TRÊN TẬP TEST ĐỘC LẬP ({len(ep_list)} episodes)")
+    print(f"🏆 KẾT QUẢ CUỐI CÙNG TRÊN TẬP BLIND TEST ĐỘC LẬP ({len(ep_list)} episodes)")
     print(f"[{'='*60}]")
     print(f"1. Greedy Baseline:    {mean_greedy:>10,.0f} Gwei")
-    print(f"2. CQL + Safety 20%:   {mean_cql:>10,.0f} Gwei")
+    print(f"2. {model_name} + Safety: {mean_cql:>10,.0f} Gwei")
     print(f"3. Deadline Miss Rate: {miss_rate:>10.1f} %")
     print("-" * 62)
     
     if mean_cql < mean_greedy:
-        print(f"⭐ HIỆU NĂNG: CQL tiết kiệm được +{savings_pct:.1f}% chi phí Gas so với Greedy!")
+        print(f"⭐ HIỆU NĂNG: {model_name} tiết kiệm được +{savings_pct:.1f}% chi phí Gas so với Greedy!")
     else:
-        print(f"❌ HIỆU NĂNG: CQL đắt hơn Greedy {-savings_pct:.1f}%.")
+        print(f"❌ HIỆU NĂNG: {model_name} đắt hơn Greedy {-savings_pct:.1f}%.")
     
     print(f"[{'='*60}]\n")
 

@@ -7,6 +7,26 @@ Lab 4 tập trung vào việc triển khai và tối ưu hóa thuật toán Deep
     \item Nắm vững các kỹ thuật ổn định training như Soft Update và Double DQN.
 \end{itemize}
 
+\begin{lstlisting}[style=PythonStyle, caption={Soft Update \& DQN Learn}]
+def learn(self, experiences, gamma):
+    states, actions, rewards, next_states, dones = experiences
+    # Double DQN action selection & evaluation
+    best_action = self.qnetwork_local(next_states).argmax(1).unsqueeze(1)
+    Q_targets_next = self.qnetwork_target(next_states).gather(1, best_action)
+    # Compute targets and expected values
+    Q_targets = rewards + (gamma * Q_targets_next * (1 - dones))
+    Q_expected = self.qnetwork_local(states).gather(1, actions)
+    # Loss & Optimization
+    loss = F.mse_loss(Q_expected, Q_targets)
+    self.optimizer.zero_grad(); loss.backward(); self.optimizer.step()
+    # Update target network
+    self.soft_update(self.qnetwork_local, self.qnetwork_target, TAU)
+
+def soft_update(self, local_model, target_model, tau):
+    # theta_target = tau * theta_local + (1 - tau) * theta_target
+    for target_param, local_param in zip(target_model.parameters(), local_model.parameters()):
+        target_param.data.copy_(tau * local_param.data + (1.0 - tau) * target_param.data)
+\end{lstlisting}
 \section{Thiết lập và Cài đặt}
 
 \subsection{4.1 Q-function Approximation với Neural Network}
@@ -43,6 +63,19 @@ Thuật toán DQN cập nhật trọng số dựa trên cực tiểu hóa hàm L
 \subsection{4.3 Experience Replay}
 Cơ chế Experience Replay lưu trữ bộ $(s, a, r, s', done)$ vào một Buffer và lấy mẫu ngẫu nhiên (Mini-batch) để huấn luyện.
 
+\begin{lstlisting}[style=PythonStyle, caption={Experience Replay Implementation}]
+class ReplayMemory:
+    def __init__(self, action_size, buffer_size, batch_size, device):
+        self.memory = deque(maxlen=buffer_size)
+        self.batch_size = batch_size
+    def add(self, state, action, reward, next_state, done):
+        self.memory.append((state, action, reward, next_state, done))
+    def sample(self):
+        # Shuffling to break temporal correlation
+        experiences = random.sample(self.memory, k=self.batch_size)
+        # Convert to Tensors...
+        return (states, actions, rewards, next_states, dones)
+\end{lstlisting}
 \textbf{Trả lời câu hỏi lý thuyết:}
 \begin{enumerate}
     \item \textbf{Vi phạm giả định i.i.d:} Các thuật toán tối ưu hóa dựa trên Gradient (như Adam, SGD) đều dựa trên giả định ngầm rằng dữ liệu huấn luyện là \textbf{độc lập và phân phối chuẩn (i.i.d)}. Trong RL, các trải nghiệm kế tiếp trong một episode có sự tương quan thời gian (temporal correlation) cực cao ($s_{t+1}$ phụ thuộc vào $s_t$).
@@ -79,5 +112,5 @@ Trong bài Lab này, chúng ta đã triển khai \textbf{Double DQN} kết hợp
     \item \textbf{Khi nào model học tốt (loss)?} Khi hàm Loss giảm dần và dao động quanh một giá trị thấp, đồng thời xu hướng chung của Reward là tăng lên. Lưu ý: Loss trong RL không phản ánh trực tiếp chất lượng Policy như trong Supervised Learning.
     \item \textbf{Khi nào agent đạt policy tốt (reward)?} Khi đường Reward trung bình tiệm cận mức trần của môi trường (500 điểm) và duy trì ổn định qua nhiều episodes.
     \item \textbf{Sự bất ổn định và "The Deadly Triad":} Deep RL khó hội tụ hơn Tabular RL do sự kết hợp của 3 yếu tố (Tam giác chết): (1) \textbf{Function Approximation} (thay đổi một trọng số ảnh hưởng toàn bộ không gian trạng thái); (2) \textbf{Bootstrapping} (dùng dự đoán để học dự đoán); và (3) \textbf{Off-policy training} (dữ liệu học khác với chính sách hiện tại). Sự kết hợp này dễ dẫn đến việc Q-value bị khuếch đại sai số và phân kỳ.
-    \item \textbf{Bản chất toán học của Overestimation Bias:} Toán tử $\max$ trong mục tiêu Bellman luôn chọn giá trị lớn nhất, điều này có xu hướng chọn cả những sai số dương (positive noise) trong ước lượng Q-value. Hệ quả là mạng DQN thường đánh giá quá cao giá trị của các hành động. Chúng ta đã khắc phục điều này bằng \textbf{Double DQN}: dùng mạng Online để chọn hành động ($\text{argmax}$) và mạng Target để định giá, giúp tách biệt việc chọn lọc và định giá, từ đó triệt tiêu sai số hệ thống này.
+    \item \textbf{Bản chất toán học của Overestimation Bias:} Toán tử $\max$ trong mục tiêu Bellman luôn chọn giá trị lớn nhất, điều này có xu hướng chọn cả những sai số dương (positive noise) trong ước lượng Q-value. Hệ quả là mạng DQN thường đánh giá quá cao giá trị của các hành động. Chúng ta đã khắc phục điều này bằng \textbf{Double DQN}: dùng mạng Online để chọn hành động ($\text{argmax}$) and mạng Target để định giá, giúp tách biệt việc chọn lọc và định giá, từ đó triệt tiêu sai số hệ thống này.
 \end{enumerate}

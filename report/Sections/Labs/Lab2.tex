@@ -24,12 +24,26 @@ Cập nhật giá trị Q dựa trên hành động tối ưu giả định ở 
     Q(s, a) \leftarrow Q(s, a) + \alpha [r + \gamma \max_{a'} Q(s', a') - Q(s, a)]
 \end{equation}
 
+\begin{lstlisting}[style=PythonStyle, caption={Q-Learning Update Implementation}]
+# Q-Learning: Off-policy TD Control
+# Q(s,a) = Q(s,a) + alpha * [R + gamma * max(Q(s',a')) - Q(s,a)]
+q_table[state, action] = q_table[state, action] + learning_rate * \
+    (reward + gamma * np.max(q_table[new_state, :]) - q_table[state, action])
+\end{lstlisting}
 \textbf{b. SARSA (On-policy):}
 Cập nhật giá trị Q dựa trên hành động thực tế $a'$ sẽ thực hiện ở trạng thái kế tiếp theo chính sách hiện tại:
 \begin{equation}
     Q(s, a) \leftarrow Q(s, a) + \alpha [r + \gamma Q(s', a') - Q(s, a)]
 \end{equation}
 
+\begin{lstlisting}[style=PythonStyle, caption={SARSA Update Implementation}]
+# SARSA: On-policy TD Control
+# Rule: Q(s,a) = Q(s,a) + alpha * [R + gamma * Q(s',a') - Q(s,a)]
+# Note: action' is chosen using the same policy as action
+new_action = choose_action(epsilon, new_state, q_table, env)
+q_table[state, action] = q_table[state, action] + learning_rate * \
+    (reward + gamma * q_table[new_state, new_action] - q_table[state, action])
+\end{lstlisting}
 \section{Kết quả thực nghiệm và Phân tích}
 Trong thí nghiệm này, cả hai thuật toán được huấn luyện trong 80,000 episodes với các siêu tham số: $\alpha = 0.1$, $\gamma = 0.99$, $\epsilon$ giảm dần từ 1.0 về 0.001.
 

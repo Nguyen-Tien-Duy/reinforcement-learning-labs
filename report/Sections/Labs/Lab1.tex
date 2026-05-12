@@ -179,7 +179,24 @@ Thuật toán này thực hiện vào việc tìm hàm giá trị tối ưu thô
 \begin{equation} 
     V_{k+1}(s) = \max_{a \in \mathcal{A}} \left( R(s, a) + \gamma \sum_{s' \in \mathcal{S}} P(s'|s,a) V_k(s') \right) 
 \end{equation} 
-Trong đó:
+
+\begin{lstlisting}[style=PythonStyle, caption={Value Iteration Implementation}]
+def value_iteration(P, R, gamma=0.99, theta=1e-6):
+    V = np.zeros(NUM_STATES)
+    policy = np.zeros(NUM_STATES, dtype=int)
+    while True:
+        delta = 0
+        V_new = np.zeros(NUM_STATES)
+        for s in range(NUM_STATES):
+            Q_s = [R[s, a] + gamma * np.sum(P[s, a] * V) for a in range(NUM_ACTIONS)]
+            best_val = np.max(Q_s)
+            delta = max(delta, abs(best_val - V[s]))
+            V_new[s] = best_val
+            policy[s] = np.argmax(Q_s)
+        V = V_new
+        if delta < theta: break
+    return policy, V
+\end{lstlisting}Trong đó:
 \begin{itemize}
     \item $V(s)$ là hàm giá trị của trạng thái $s$.
     \item $R(s, a)$ là phần thưởng khi thực hiện hành động $a$ trong trạng thái $s$.
@@ -196,12 +213,41 @@ Tính toán hàm giá trị $V^\pi(s)$ cho một chính sách cố định $\pi$
     V_{k+1}(s) = R(s, \pi(s)) + \gamma \sum_{s' \in \mathcal{S}} P(s'|s,\pi(s)) V_k(s')
 \end{equation}
 
+\begin{lstlisting}[style=PythonStyle, caption={Policy Evaluation}]
+def policy_evaluation(policy, P, R, gamma=0.99, theta=1e-6):
+    V = np.zeros(NUM_STATES)
+    while True:
+        delta = 0
+        V_new = np.zeros(NUM_STATES)
+        for s in range(NUM_STATES):
+            a = policy[s]
+            v = R[s, a] + gamma * np.sum(P[s, a] * V)
+            delta = max(delta, abs(v - V[s]))
+            V_new[s] = v
+        V = V_new
+        if delta < theta: break
+    return V
+\end{lstlisting}
 \textbf{Bước 2: Cải tiến chính sách (Policy Improvement)}
 Dựa vào hàm giá trị đã được đánh giá ở Bước 1, cập nhật lại chính sách bằng cách chọn hành động đem lại kỳ vọng cao nhất cho mỗi trạng thái.
 \begin{equation} 
     \pi_{new}(s) = \arg\max_{a \in \mathcal{A}} \left( R(s, a) + \gamma \sum_{s' \in \mathcal{S}} P(s'|s,a) V^\pi(s') \right)
 \end{equation}
-Quá trình lặp lại Bước 1 và Bước 2 sẽ dừng lại khi chính sách không còn thay đổi ($\pi_{new}(s) = \pi_{old}(s) \ \forall s \in \mathcal{S}$).
+
+\begin{lstlisting}[style=PythonStyle, caption={Policy Improvement}]
+def policy_iteration(P, R, gamma=0.99, theta=1e-6):
+    policy = np.random.choice(NUM_ACTIONS, size=NUM_STATES)
+    while True:
+        V = policy_evaluation(policy, P, R, gamma, theta)
+        policy_stable = True
+        for s in range(NUM_STATES):
+            old_action = policy[s]
+            Q_s = [R[s, a] + gamma * np.sum(P[s, a] * V) for a in range(NUM_ACTIONS)]
+            policy[s] = np.argmax(Q_s)
+            if old_action != policy[s]: policy_stable = False
+        if policy_stable: break
+    return policy, V
+\end{lstlisting}Quá trình lặp lại Bước 1 và Bước 2 sẽ dừng lại khi chính sách không còn thay đổi ($\pi_{new}(s) = \pi_{old}(s) \ \forall s \in \mathcal{S}$).
 
 \subsection{Đánh giá kết quả và So sánh}
 Sau khi tối ưu hóa các tham số rời rạc hóa (BINS = [1, 1, 24, 24]) và bổ sung bộ đếm thời gian thực thi, kết quả thực nghiệm được tổng hợp như sau:

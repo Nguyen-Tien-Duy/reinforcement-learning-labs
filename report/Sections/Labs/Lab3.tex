@@ -35,8 +35,10 @@ Chúng ta triển khai thuật toán TD(0) để học giá trị trạng thái 
     \item \textbf{Khi $\gamma \to 1$:} Agent sẽ coi trọng các phần thưởng trong tương lai xa tương đương với phần thưởng hiện tại, giá trị trạng thái sẽ lớn hơn và đại diện cho tổng thưởng dài hạn.
     \item \textbf{Cài đặt V(s) cho CartPole:} Sử dụng kỹ thuật rời rạc hóa (Discretization) để chia các biến liên tục thành các "thùng" (bins), biến mỗi tổ hợp thành một chỉ số trong mảng (Q-table).
     \item \textbf{Hàm update TD(0):} 
-    \begin{lstlisting}[style=PythonStyle]
-v_td[s_idx] += alpha * (reward + gamma * v_next - v_td[s_idx])
+    \begin{lstlisting}[style=PythonStyle, caption={TD(0) Update Rule}]
+# TD(0) Update: V(s) = V(s) + alpha * (reward + gamma * V(s') - V(s))
+v_next = 0 if done else v_td[next_state_idx]
+v_td[state_idx] += alpha * (reward + gamma * v_next - v_td[state_idx])
     \end{lstlisting}
     Dòng code này tính toán sai số giữa mục tiêu dự đoán ($r + \gamma V'$) và giá trị hiện tại, sau đó điều chỉnh một khoảng $\alpha$ để tiến gần mục tiêu hơn.
     \item \textbf{Discretize trong CartPole:} Chia 4 chiều quan sát ($x, \dot{x}, \theta, \dot{\theta}$) thành các khoảng cố định bằng `np.digitize` hoặc tính tỉ lệ theo `MIN/MAX\_VALS`.
@@ -76,6 +78,17 @@ Chúng ta triển khai n-step Q-learning để trung hòa ưu nhược điểm c
     \item \textbf{Cấu trúc n-step buffer:} Sử dụng một hàng đợi (`deque`) lưu trữ các bộ $(s, a, r)$ có độ dài cố định là $n$.
     \item \textbf{Xử lý khi episode kết thúc sớm:} Nếu episode kết thúc tại bước $T < t+n$, ta tính n-step return dựa trên các phần thưởng thực tế còn lại và không thực hiện bootstrapping ($\gamma^n \max Q = 0$).
     \item \textbf{Hàm tính n-step return:} Duyệt qua buffer, nhân mỗi reward với $\gamma^i$ tương ứng.
+    \begin{lstlisting}[style=PythonStyle, caption={n-step Return Calculation}]
+# Calculate n-step return G: r_t + gamma*r_{t+1} + ... + gamma^{n-1}*r_{t+n-1}
+G = 0
+for i, (_, _, r_i) in enumerate(buffer):
+    G += (gamma ** i) * r_i
+# Bootstrapping term: gamma^n * max Q(s_{t+n})
+if not done:
+    G += (gamma ** len(buffer)) * np.max(q_table[state_idx])
+# Update rule
+q_table[s_t, a_t] += alpha * (G - q_table[s_t, a_t])
+    \end{lstlisting}
     \item \textbf{So sánh n=1, 3, 5:} Thường $n=3$ hoặc $n=5$ cho kết quả tốt nhất (Hình \ref{fig:lab3_nstep}) vì tận dụng được thông tin reward dài hơn mà không bị quá nhiễu.
     \item \textbf{Khi n quá lớn:} Thuật toán mất dần tính chất Bootstrapping và tiến dần về Monte Carlo, dẫn đến Variance cực cao và làm quá trình học mất ổn định do nhiễu tích lũy.
     \item \textbf{Tăng tốc độ hội tụ (Convergence Rate):} n-step thường hội tụ nhanh hơn về mặt thời gian thực vì nó tận dụng được nhiều thông tin hơn trong mỗi lần cập nhật trọng số.
